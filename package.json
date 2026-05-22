@@ -1,0 +1,16 @@
+{
+  "name": "llm-bench",
+  "version": "1.0.0",
+  "description": "vLLM TPS benchmark tool with LangChain JS",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.1.48",
+    "@langchain/openai": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}

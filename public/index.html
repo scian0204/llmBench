@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLM Bench - vLLM TPS 측정</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --success: #22c55e;
+      --warning: #f59e0b;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin-bottom: 0.3rem;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 2rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 0.4rem;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.9rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--primary);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 0.8rem;
+      margin-top: 1.5rem;
+    }
+
+    .btn {
+      padding: 0.7rem 2rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: var(--danger-hover);
+    }
+
+    .btn-secondary {
+      background: var(--border);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #475569;
+    }
+
+    /* Mode tabs */
+    .mode-tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 1.5rem;
+      background: var(--bg);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .mode-tab {
+      flex: 1;
+      padding: 0.7rem;
+      text-align: center;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      transition: all 0.2s;
+    }
+
+    .mode-tab.active {
+      background: var(--primary);
+      color: white;
+    }
+
+    .mode-tab:hover:not(.active) {
+      background: var(--border);
+    }
+
+    /* Stats panel */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.2rem;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.3rem;
+    }
+
+    .stat-card.highlight .stat-value {
+      color: var(--primary);
+    }
+
+    .stat-card.success .stat-value {
+      color: var(--success);
+    }
+
+    .stat-card.warning .stat-value {
+      color: var(--warning);
+    }
+
+    /* Status indicator */
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .status-dot.running {
+      background: var(--success);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.4;
+      }
+    }
+
+    /* Auto profile chart */
+    .chart-container {
+      margin-top: 1rem;
+      position: relative;
+      height: 250px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .chart-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Results table */
+    .full-width {
+      grid-column: 1 / -1;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.6rem;
+      border-bottom: 2px solid var(--border);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      position: sticky;
+      top: 0;
+      background: var(--card);
+      z-index: 1;
+    }
+
+    td {
+      padding: 0.5rem 0.6rem;
+      border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+    }
+
+    tr:hover td {
+      background: rgba(59, 130, 246, 0.05);
+    }
+
+    .table-wrap {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .table-wrap::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .table-wrap::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    .error-msg {
+      color: var(--danger);
+      font-size: 0.85rem;
+      margin-top: 0.5rem;
+    }
+
+    /* Progress bar */
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      margin-bottom: 1rem;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--primary);
+      transition: width 0.3s;
+      border-radius: 3px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .stream-panel { max-height: 400px; overflow-y: auto; }
+    .stream-card { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.5rem; }
+    .stream-card:last-child { margin-bottom: 0; }
+    .stream-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; cursor: pointer; user-select: none; background: rgba(59,130,246,0.08); }
+    .stream-header:hover { background: rgba(59,130,246,0.15); }
+    .stream-card.done .stream-header { background: rgba(34,197,94,0.08); }
+    .stream-card.error .stream-header { background: rgba(239,68,68,0.08); }
+    .stream-id { font-weight: 600; font-size: 0.85rem; min-width: 2.5rem; }
+    .stream-status { font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 4px; }
+    .stream-status.running { background: var(--primary); color: #fff; animation: pulse 1.5s infinite; }
+    .stream-status.done { background: var(--success); color: #fff; }
+    .stream-status.error { background: var(--danger); color: #fff; }
+    .stream-stats { margin-left: auto; font-size: 0.75rem; color: var(--muted); }
+    .stream-body { display: none; padding: 0.5rem 0.75rem; font-size: 0.82rem; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; border-top: 1px solid var(--border); background: rgba(0,0,0,0.2); }
+    .stream-card.expanded .stream-body { display: block; }
+    .stream-toggle { font-size: 0.7rem; transition: transform 0.2s; }
+    .stream-card.expanded .stream-toggle { transform: rotate(90deg); }
+
+    .auto-info {
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 8px;
+      padding: 0.8rem;
+      font-size: 0.85rem;
+      color: var(--primary);
+      margin-bottom: 1rem;
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      width: auto;
+      accent-color: var(--primary);
+    }
+
+    .checkbox-group label {
+      margin-bottom: 0;
+      font-size: 0.85rem;
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .optimal-badge {
+      display: inline-block;
+      background: var(--success);
+      color: #000;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      margin-left: 0.5rem;
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 1rem;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .stats-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>LLM Bench</h1>
+    <p class="subtitle">vLLM 모델 동시 접속 TPS 성능 측정 도구</p>
+
+    <!-- Mode tabs -->
+    <div class="mode-tabs">
+      <button class="mode-tab active" id="tabManual" onclick="setMode('manual')">수동 모드</button>
+      <button class="mode-tab" id="tabAuto" onclick="setMode('auto')">자동 최적화 모드</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid" id="statsGrid">
+      <div class="stat-card highlight">
+        <div class="stat-value" id="statAvgTps">0</div>
+        <div class="stat-label">평균 TPS (Token/Sec)</div>
+      </div>
+      <div class="stat-card success">
+        <div class="stat-value" id="statTotalTokens">0</div>
+        <div class="stat-label">총 Output Tokens</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="stat-value" id="statLatency">0</div>
+        <div class="stat-label">평균 Latency (s)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statCompleted">0</div>
+        <div class="stat-label">완료 요청</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="statElapsed">0s</div>
+        <div class="stat-label">경과 시간</div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">연결 설정</div>
+        <div class="form-group">
+          <label>vLLM OpenAI Compatible URL</label>
+          <input type="text" id="baseUrl" placeholder="http://localhost:8000/v1"
+            value="http://localhost:8000/v1" />
+        </div>
+        <div class="form-group">
+          <label>API Key (선택)</label>
+          <input type="password" id="apiKey" placeholder="비밀번호 없이 접속 시 비워두세요" />
+        </div>
+        <div class="form-group">
+          <label>Model Name</label>
+          <input type="text" id="model" placeholder="Qwen/Qwen2.5-7B-Instruct" />
+        </div>
+      </div>
+
+      <div class="card">
+        <!-- Manual mode settings -->
+        <div id="manualSettings">
+          <div class="card-title">테스트 설정 (수동)</div>
+          <div class="form-group">
+            <label>Prompt</label>
+            <textarea id="prompt"
+              placeholder="프롬프트를 입력하세요">안녕하세요, 오늘은 날씨가 좋네요. 인공지능의 미래에 대해 thoughts를 공유해주세요.</textarea>
+          </div>
+          <div class="row">
+            <div class="form-group">
+              <label>동시 접속 수</label>
+              <input type="number" id="concurrent" value="4" min="1" max="100" />
+            </div>
+            <div class="form-group">
+              <label>반복 라운드</label>
+              <input type="number" id="rounds" value="3" min="1" max="100" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="form-group">
+              <label>Max Tokens</label>
+              <input type="number" id="maxTokens" value="1024" min="1" />
+            </div>
+            <div class="form-group">
+              <label>Temperature</label>
+              <input type="number" id="temperature" value="0.7" min="0" max="2" step="0.1" />
+            </div>
+          </div>
+          <div class="checkbox-group">
+            <input type="checkbox" id="varyPrompt" checked />
+            <label for="varyPrompt">프롬프트 변주 (vLLM 캐시 회피)</label>
+          </div>
+        </div>
+
+        <!-- Auto mode settings -->
+        <div id="autoSettings" class="hidden">
+          <div class="card-title">자동 최적화 설정</div>
+          <div class="auto-info">
+            동시 접속 수를 단계별로 증가시키며 최대 TPS를 달성하는 최적값을 찾습니다.
+            TPS가 정상의 90% 미만으로 떨어지면 검색을 종료합니다.
+          </div>
+          <div class="form-group">
+            <label>Prompt</label>
+            <textarea id="autoPrompt"
+              placeholder="프롬프트를 입력하세요">안녕하세요, 오늘은 날씨가 좋네요. 인공지능의 미래에 대해 thoughts를 공유해주세요.</textarea>
+          </div>
+          <div class="row">
+            <div class="form-group">
+              <label>최대 동시 접속 수</label>
+              <input type="number" id="autoMaxConcurrent" value="64" min="4" max="500" />
+            </div>
+            <div class="form-group">
+              <label>단계별 측정 횟수</label>
+              <input type="number" id="autoPerRound" value="3" min="1" max="10" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="form-group">
+              <label>웜업 횟수 (동시접속=1)</label>
+              <input type="number" id="autoWarmup" value="2" min="0" max="5" />
+            </div>
+            <div class="form-group">
+              <label>Max Tokens</label>
+              <input type="number" id="autoMaxTokens" value="1024" min="1" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Temperature</label>
+            <input type="number" id="autoTemperature" value="0.7" min="0" max="2" step="0.1" />
+          </div>
+          <div class="checkbox-group">
+            <input type="checkbox" id="autoVaryPrompt" checked />
+            <label for="autoVaryPrompt">프롬프트 변주 (vLLM 캐시 회피)</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="card full-width">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+          <div style="display:flex; align-items:center; gap:1rem;">
+            <div class="status">
+              <span class="status-dot" id="statusDot"></span>
+              <span id="statusText">대기 중</span>
+            </div>
+            <div id="autoPhase" class="hidden" style="font-size:0.85rem; color:var(--warning);"></div>
+          </div>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" id="btnStart" onclick="startBenchmark()">측정 시작</button>
+          <button class="btn btn-danger" id="btnStop" onclick="stopBenchmark()" disabled>중지</button>
+          <button class="btn btn-secondary" id="btnReset" onclick="resetBenchmark()">초기화</button>
+        </div>
+        <div class="error-msg" id="errorMsg"></div>
+      </div>
+
+      <!-- Auto mode profile chart -->
+      <div class="card full-width hidden" id="profileCard">
+        <div class="card-title">자동 최적화 프로파일</div>
+        <div id="profileSummary" style="margin-bottom:0.8rem;"></div>
+        <div class="chart-container">
+          <canvas id="profileChart" class="chart-canvas"></canvas>
+        </div>
+        <table style="margin-top:1rem;">
+          <thead>
+            <tr>
+              <th>동시 접속 수</th>
+              <th>평균 TPS (개요)</th>
+              <th>전체 TPS (총괄)</th>
+              <th>평균 Latency (s)</th>
+              <th>성공</th>
+              <th>실패</th>
+            </tr>
+          </thead>
+          <tbody id="profileBody">
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Stream responses -->
+      <div class="card full-width hidden" id="streamCard">
+        <div class="card-title">실시간 응답</div>
+        <div class="stream-panel" id="streamPanel"></div>
+      </div>
+
+      <!-- Results table -->
+      <div class="card full-width">
+        <div class="card-title">결과</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Latency (s)</th>
+                <th>Input Tokens</th>
+                <th>Output Tokens</th>
+                <th>Total Tokens</th>
+                <th>TPS</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentMode = 'manual';
+    let pollTimer = null;
+    let elapsedTimer = null;
+    let elapsedStart = 0;
+    let wasMeasuring = false;
+
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById('tabManual').classList.toggle('active', mode === 'manual');
+      document.getElementById('tabAuto').classList.toggle('active', mode === 'auto');
+      document.getElementById('manualSettings').classList.toggle('hidden', mode === 'auto');
+      document.getElementById('autoSettings').classList.toggle('hidden', mode === 'manual');
+    }
+
+    async function startBenchmark() {
+      const isAuto = currentMode === 'auto';
+
+      const baseUrl = document.getElementById('baseUrl').value.trim();
+      const model = document.getElementById('model').value.trim();
+      const prompt = isAuto
+        ? document.getElementById('autoPrompt').value.trim()
+        : document.getElementById('prompt').value.trim();
+      const apiKey = document.getElementById('apiKey').value;
+
+      if (!baseUrl || !model || !prompt) {
+        showError('URL, Model, Prompt를 모두 입력해주세요.');
+        return;
+      }
+
+      clearError();
+      document.getElementById('btnStart').disabled = true;
+      document.getElementById('btnStop').disabled = false;
+      setRunning(true);
+
+      const body = {
+        baseUrl,
+        model,
+        prompt,
+        apiKey,
+        mode: currentMode,
+      };
+
+      if (isAuto) {
+        body.maxTokens = parseInt(document.getElementById('autoMaxTokens').value) || 1024;
+        body.temperature = parseFloat(document.getElementById('autoTemperature').value) || 0.7;
+        body.autoMaxConcurrent = parseInt(document.getElementById('autoMaxConcurrent').value) || 64;
+        body.autoPerRound = parseInt(document.getElementById('autoPerRound').value) || 3;
+        body.autoWarmup = parseInt(document.getElementById('autoWarmup').value) || 2;
+        body.varyPrompt = document.getElementById('autoVaryPrompt').checked;
+      } else {
+        body.concurrent = parseInt(document.getElementById('concurrent').value) || 1;
+        body.rounds = parseInt(document.getElementById('rounds').value) || 1;
+        body.maxTokens = parseInt(document.getElementById('maxTokens').value) || 1024;
+        body.temperature = parseFloat(document.getElementById('temperature').value) || 0.7;
+        body.varyPrompt = document.getElementById('varyPrompt').checked;
+      }
+
+      const res = await fetch('/api/measure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showError(data.error || '요청 실패');
+        setRunning(false);
+        document.getElementById('btnStart').disabled = false;
+        document.getElementById('btnStop').disabled = true;
+        return;
+      }
+
+      elapsedStart = Date.now();
+      updateElapsed();
+      elapsedTimer = setInterval(updateElapsed, 100);
+      pollTimer = setInterval(pollStatus, 500);
+      wasMeasuring = true;
+    }
+
+    async function pollStatus() {
+      const res = await fetch('/api/status');
+      const data = await res.json();
+
+      // 측정 종료 감지 (수동 모드: measuring이 false로 바뀌면 종료)
+      if (wasMeasuring && !data.measuring && !data.autoState) {
+        wasMeasuring = false;
+        stopPolling();
+        setRunning(false);
+        document.getElementById('btnStart').disabled = false;
+        document.getElementById('btnStop').disabled = true;
+        document.getElementById('progressFill').style.width = '100%';
+      }
+
+      document.getElementById('statAvgTps').textContent = data.avgTPS.toFixed(1);
+      document.getElementById('statTotalTokens').textContent = data.totalTokens.toLocaleString();
+      document.getElementById('statCompleted').textContent = data.completed;
+
+      // Auto state
+      if (data.autoState) {
+        const as = data.autoState;
+        const phaseEl = document.getElementById('autoPhase');
+        phaseEl.classList.remove('hidden');
+
+        if (as.done) {
+          document.getElementById('autoPhase').innerHTML =
+            `완료! 최적 동시 접속 수: <strong>${as.optimalConcurrent}</strong> (최대 TPS: ${as.optimalTPS})`;
+          stopPolling();
+          setRunning(false);
+          document.getElementById('btnStart').disabled = false;
+          document.getElementById('btnStop').disabled = true;
+          document.getElementById('progressFill').style.width = '100%';
+        } else {
+          document.getElementById('autoPhase').textContent =
+            `${as.phase === 'warmup' ? '웜업' : '측정'} — 현재 동시 접속: ${as.currentConcurrent} | 정상 TPS: ${Math.round(as.peakTotalTPS)}`;
+        }
+
+        // Progress chart
+        if (as.profile && as.profile.length > 0) {
+          showProfile(as.profile, as.optimalConcurrent);
+        }
+      }
+
+      // Fetch detailed results
+      const res2 = await fetch('/api/results');
+      const data2 = await res2.json();
+
+      document.getElementById('statLatency').textContent = data2.summary.avgLatency.toFixed(2);
+
+      const tbody = document.getElementById('resultsBody');
+      tbody.innerHTML = data2.results.map(r => `
+        <tr>
+          <td>${r.index + 1}</td>
+          <td>${r.latency}</td>
+          <td>${r.inputTokens.toLocaleString()}</td>
+          <td>${r.outputTokens.toLocaleString()}</td>
+          <td>${r.totalTokens.toLocaleString()}</td>
+          <td>${r.tps}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function stopBenchmark() {
+      await fetch('/api/stop', { method: 'POST' });
+      stopPolling();
+      setRunning(false);
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled = true;
+    }
+
+    async function resetBenchmark() {
+      await fetch('/api/reset');
+      stopPolling();
+      setRunning(false);
+      document.getElementById('btnStart').disabled = false;
+      document.getElementById('btnStop').disabled = true;
+      document.getElementById('profileCard').classList.add('hidden');
+      document.getElementById('autoPhase').classList.add('hidden');
+      ['statAvgTps', 'statTotalTokens', 'statLatency'].forEach(id => {
+        document.getElementById(id).textContent = '0';
+      });
+      document.getElementById('statCompleted').textContent = '0';
+      document.getElementById('statElapsed').textContent = '0s';
+      document.getElementById('progressFill').style.width = '0%';
+      document.getElementById('resultsBody').innerHTML = '';
+      clearError();
+    }
+
+    function stopPolling() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+    }
+
+    function setRunning(running) {
+      const dot = document.getElementById('statusDot');
+      const text = document.getElementById('statusText');
+      if (running) {
+        dot.classList.add('running');
+        text.textContent = '측정 중';
+      } else {
+        dot.classList.remove('running');
+        text.textContent = '대기 중';
+      }
+    }
+
+    function updateElapsed() {
+      const s = ((Date.now() - elapsedStart) / 1000).toFixed(1);
+      document.getElementById('statElapsed').textContent = s + 's';
+    }
+
+    function showError(msg) {
+      document.getElementById('errorMsg').textContent = msg;
+    }
+
+    function clearError() {
+      document.getElementById('errorMsg').textContent = '';
+    }
+
+    // ── Profile chart (canvas) ─────────────────────────────────
+
+    function showProfile(profile, optimal) {
+      const card = document.getElementById('profileCard');
+      card.classList.remove('hidden');
+
+      // Summary
+      const peak = profile.reduce((a, b) => a.totalTPS > b.totalTPS ? a : b);
+      document.getElementById('profileSummary').innerHTML =
+        `최적 동시 접속 수: <strong style="color:var(--success);">${optimal || peak.concurrent}</strong> ` +
+        `(최대 전체 TPS: <strong style="color:var(--primary);">${peak.totalTPS}</strong>)`;
+
+      // Table
+      document.getElementById('profileBody').innerHTML = profile.map(p => `
+        <tr style="${p.concurrent === (optimal || peak.concurrent) ? 'background:rgba(34,197,94,0.1);' : ''}">
+          <td>${p.concurrent} ${p.concurrent === (optimal || peak.concurrent) ? '<span class="optimal-badge">최적</span>' : ''}</td>
+          <td>${p.avgTPS}</td>
+          <td><strong>${p.totalTPS}</strong></td>
+          <td>${p.avgLatency}</td>
+          <td>${p.success}</td>
+          <td>${p.failed}</td>
+        </tr>
+      `).join('');
+
+      // Canvas chart
+      drawProfileChart(profile, optimal || peak.concurrent);
+    }
+
+    function drawProfileChart(profile, optimal) {
+      const canvas = document.getElementById('profileChart');
+      const container = canvas.parentElement;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = container.clientWidth * dpr;
+      canvas.height = container.clientHeight * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      const W = container.clientWidth;
+      const H = container.clientHeight;
+
+      ctx.clearRect(0, 0, W, H);
+
+      const pad = { top: 30, right: 20, bottom: 50, left: 60 };
+      const cw = W - pad.left - pad.right;
+      const ch = H - pad.top - pad.bottom;
+
+      if (profile.length === 0) return;
+
+      const maxTotalTPS = Math.max(...profile.map(p => p.totalTPS)) * 1.15;
+      const maxAvgTPS = Math.max(...profile.map(p => p.avgTPS)) * 1.15;
+
+      // Grid lines
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + (ch / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(W - pad.right, y);
+        ctx.stroke();
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(Math.round(maxTotalTPS * (1 - i / 4)), pad.left - 8, y + 4);
+      }
+
+      const barW = Math.min(cw / (profile.length + 1), 60);
+      const gap = cw / (profile.length + 1);
+
+      // Bars (totalTPS)
+      profile.forEach((p, i) => {
+        const x = pad.left + gap * (i + 1) - barW / 2;
+        const barH = (p.totalTPS / maxTotalTPS) * ch;
+        const y = pad.top + ch - barH;
+
+        const isOptimal = p.concurrent === optimal;
+        ctx.fillStyle = isOptimal ? '#22c55e' : '#3b82f6';
+        ctx.globalAlpha = 0.8;
+        ctx.fillRect(x, y, barW, barH);
+        ctx.globalAlpha = 1;
+
+        // Value on top
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.totalTPS, x + barW / 2, y - 6);
+
+        // X label
+        ctx.fillStyle = isOptimal ? '#22c55e' : '#94a3b8';
+        ctx.font = isOptimal ? 'bold 12px sans-serif' : '11px sans-serif';
+        ctx.fillText(`n=${p.concurrent}`, x + barW / 2, H - pad.bottom + 20);
+      });
+
+      // Line (avg TPS per request)
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      profile.forEach((p, i) => {
+        const x = pad.left + gap * (i + 1);
+        const y = pad.top + ch - (p.avgTPS / maxAvgTPS) * ch;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Legend
+      ctx.fillStyle = '#3b82f6';
+      ctx.fillRect(pad.left, 8, 12, 12);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('전체 TPS (총합)', pad.left + 16, 18);
+
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(pad.left + 140, 8, 12, 12);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText('평균 TPS (요청 개요)', pad.left + 156, 18);
+    }
+
+    // ── SSE Stream Viewer ─────────────────────────────────────
+
+    let eventSource = null;
+    const streamRequests = {}; // id -> {text, status, stats}
+
+    function connectSSE() {
+      if (eventSource) { eventSource.close(); }
+      eventSource = new EventSource('/api/stream');
+
+      eventSource.addEventListener('request-start', (e) => {
+        const data = JSON.parse(e.data);
+        streamRequests[data.id] = { text: '', status: 'running', stats: null };
+        updateStreamUI();
+        showStreamCard();
+      });
+
+      eventSource.addEventListener('token', (e) => {
+        const data = JSON.parse(e.data);
+        if (streamRequests[data.id]) {
+          streamRequests[data.id].text += data.text;
+          // Update the text without full re-render
+          const contentEl = document.querySelector(`.stream-content[data-id="${data.id}"]`);
+          if (contentEl) {
+            contentEl.textContent = streamRequests[data.id].text;
+          }
+        }
+      });
+
+      eventSource.addEventListener('request-end', (e) => {
+        const data = JSON.parse(e.data);
+        if (streamRequests[data.id]) {
+          streamRequests[data.id].status = 'done';
+          streamRequests[data.id].stats = data;
+        }
+        updateStreamUI();
+      });
+
+      eventSource.addEventListener('request-error', (e) => {
+        const data = JSON.parse(e.data);
+        if (streamRequests[data.id]) {
+          streamRequests[data.id].status = 'error';
+          streamRequests[data.id].text = '에러: ' + data.error;
+        }
+        updateStreamUI();
+      });
+
+      eventSource.addEventListener('bench-complete', () => {
+        // Keep the stream panel visible for review
+      });
+
+      eventSource.onerror = () => {
+        eventSource.close();
+        eventSource = null;
+      };
+    }
+
+    function disconnectSSE() {
+      if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+      }
+    }
+
+    function showStreamCard() {
+      document.getElementById('streamCard').classList.remove('hidden');
+    }
+
+    function hideStreamCard() {
+      document.getElementById('streamCard').classList.add('hidden');
+      document.getElementById('streamPanel').innerHTML = '';
+      Object.keys(streamRequests).forEach(k => delete streamRequests[k]);
+    }
+
+    function updateStreamUI() {
+      const panel = document.getElementById('streamPanel');
+      const ids = Object.keys(streamRequests).map(Number);
+      // Remove cards that are no longer needed
+      panel.querySelectorAll('.stream-card').forEach(el => {
+        const id = parseInt(el.dataset.id);
+        if (!streamRequests[id]) el.remove();
+      });
+
+      for (const id of ids) {
+        let card = panel.querySelector(`.stream-card[data-id="${id}"]`);
+        if (!card) {
+          card = document.createElement('div');
+          card.className = 'stream-card';
+          card.dataset.id = id;
+          const hdr = document.createElement('div');
+          hdr.className = 'stream-header';
+          hdr.innerHTML = `<span class="stream-toggle">▶</span><span class="stream-id">Req ${id + 1}</span><span class="stream-status running">진행 중</span><span class="stream-stats"></span>`;
+          hdr.onclick = () => card.classList.toggle('expanded');
+          const body = document.createElement('div');
+          body.className = 'stream-body';
+          const content = document.createElement('span');
+          content.className = 'stream-content';
+          content.dataset.id = id;
+          body.appendChild(content);
+          card.appendChild(hdr);
+          card.appendChild(body);
+          card.classList.add('expanded');
+          panel.prepend(card);
+        }
+      }
+
+      // Update existing cards
+      for (const id of ids) {
+        const req = streamRequests[id];
+        const card = panel.querySelector(`.stream-card[data-id="${id}"]`);
+        if (!card) continue;
+        const statusEl = card.querySelector('.stream-status');
+        const statsEl = card.querySelector('.stream-stats');
+        if (req.status === 'running') {
+          statusEl.className = 'stream-status running';
+          statusEl.textContent = '진행 중';
+          statsEl.textContent = '';
+          card.className = 'stream-card expanded';
+        } else if (req.status === 'done') {
+          statusEl.className = 'stream-status done';
+          statusEl.textContent = '완료';
+          statsEl.textContent = `${req.stats.outputTokens} tokens | ${req.stats.latency}s | TPS ${req.stats.tps}`;
+          card.className = 'stream-card done';
+        } else if (req.status === 'error') {
+          statusEl.className = 'stream-status error';
+          statusEl.textContent = '실패';
+          statsEl.textContent = '';
+          card.className = 'stream-card error';
+        }
+      }
+    }
+
+    // Override startBenchmark to connect SSE
+    const _origStart = window.startBenchmark;
+    window.startBenchmark = async function() {
+      hideStreamCard();
+      connectSSE();
+      await _origStart();
+    };
+
+    // Override stopBenchmark to disconnect SSE
+    const _origStop = window.stopBenchmark;
+    window.stopBenchmark = async function() {
+      wasMeasuring = false;
+      await _origStop();
+      disconnectSSE();
+    };
+
+    // Override resetBenchmark to clean up SSE
+    const _origReset = window.resetBenchmark;
+    window.resetBenchmark = async function() {
+      wasMeasuring = false;
+      await _origReset();
+      disconnectSSE();
+      hideStreamCard();
+    }
+  </script>
+</body>
+
+</html>
