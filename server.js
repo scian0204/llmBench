@@ -1489,7 +1489,7 @@ export function DataGrid<T extends GridRow>(props: DataGridProps<T>) {
 `,
 };
 
-function generateLargeCodebase(seed: number): string {
+function generateLargeCodebase(seed) {
   // seed 기반의 의사 난수 생성기 (LCG)
   let state = seed;
   const rand = () => {
@@ -1497,14 +1497,13 @@ function generateLargeCodebase(seed: number): string {
     return (state >>> 0) / 0xffffffff;
   };
 
-  const files = Object.values(CODEBASE_TEMPLATES);
-  const chunks: string[] = [];
+  const chunks = [];
 
   // 코드베이스 헤더
   chunks.push(
     '// ========================================',
     '// Large Codebase Context (benchmark payload)',
-    `\`// Generated: seed=\${seed}\``,
+    '// Generated: seed=' + seed,
     '// ========================================',
     ''
   );
@@ -1515,7 +1514,7 @@ function generateLargeCodebase(seed: number): string {
   ];
 
   for (let iteration = 0; iteration < 3; iteration++) {
-    chunks.push(\`/* --- Iteration \${iteration + 1} / 3 --- */\`);
+    chunks.push('/* --- Iteration ' + (iteration + 1) + ' / 3 --- */');
     chunks.push('');
 
     for (const key of sections) {
@@ -1531,20 +1530,20 @@ function generateLargeCodebase(seed: number): string {
   chunks.push('');
 
   for (let i = 0; i < 20; i++) {
-    chunks.push(\`\`);
-    chunks.push(\`// utils/module_\${i + 1}.ts\`);
-    chunks.push(\`export const MODULE_ID_\${i + 1} = 'module-\${String.fromCharCode(97 + (i % 26))}\${i}';\`);
+    chunks.push('');
+    chunks.push('// utils/module_' + (i + 1) + '.ts');
+    chunks.push('export const MODULE_ID_' + (i + 1) + " = 'module-" + String.fromCharCode(97 + (i % 26)) + i + "';");
     chunks.push('');
     chunks.push('export interface ModuleConfig {');
     for (let j = 0; j < 10; j++) {
-      chunks.push(\`  field\${j + 1}: string | number | boolean | null;\`);
+      chunks.push('  field' + (j + 1) + ': string | number | boolean | null;');
     }
     chunks.push('}');
     chunks.push('');
     chunks.push('export function processModuleData(input: ModuleConfig): ProcessedResult {');
     chunks.push('  const result = {');
     for (let j = 0; j < 10; j++) {
-      chunks.push(\`    field\${j + 1}: input.field\${j + 1} != null ? String(input.field\${j + 1}) : 'default',\`);
+      chunks.push('    field' + (j + 1) + ': input.field' + (j + 1) + ' != null ? String(input.field' + (j + 1) + ") : 'default',");
     }
     chunks.push('  };');
     chunks.push('  return result as unknown as ProcessedResult;');
@@ -1553,7 +1552,7 @@ function generateLargeCodebase(seed: number): string {
     chunks.push('export function validateModuleConfig(config: Partial<ModuleConfig>): boolean {');
     chunks.push('  const requiredFields = [');
     for (let j = 0; j < 10; j++) {
-      chunks.push(\`    'field\${j + 1}',\`);
+      chunks.push("    'field" + (j + 1) + "',");
     }
     chunks.push('  ];');
     chunks.push('  return requiredFields.every(f => config[f as keyof ModuleConfig] != null);');
