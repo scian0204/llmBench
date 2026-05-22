@@ -17,6 +17,1553 @@ emitter.setMaxListeners(100);
 // 각 요청마다 다른 프롬프트를 생성합니다.
 // 구조/길이는 비슷하게 유지하면서 문자열만 다르게 만들어 캐시를 회피합니다.
 
+// ── 대규모 코드베이스 컨텍스트 생성 ─────────────────────────────
+// 실사용 시 사용자가 긴 코드베이스를 프롬프트에 포함하는 상황을 모의합니다.
+// 다량의 TypeScript/JavaScript 코드를 생성하여 input token 수를 크게 늘립니다.
+
+const CODEBASE_TEMPLATES = {
+  types: `
+// types/user.ts
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  createdAt: Date;
+  updatedAt: Date;
+  profile: UserProfile | null;
+  settings: UserSettings;
+  metadata: Record<string, unknown>;
+}
+
+export type UserRole = 'admin' | 'moderator' | 'user' | 'guest' | 'banned';
+
+export interface UserProfile {
+  bio: string;
+  avatarUrl: string;
+  website: string;
+  location: string;
+  socialLinks: SocialLink[];
+  skills: string[];
+}
+
+export interface SocialLink {
+  platform: 'twitter' | 'github' | 'linkedin' | 'website';
+  url: string;
+  label: string;
+}
+
+export interface UserSettings {
+  theme: 'light' | 'dark' | 'system';
+  language: string;
+  timezone: string;
+  emailNotifications: boolean;
+  pushNotifications: boolean;
+  twoFactorEnabled: boolean;
+  sessionTimeout: number;
+}
+
+// types/document.ts
+export interface Document {
+  id: string;
+  title: string;
+  content: string;
+  authorId: string;
+  createdAt: Date;
+  updatedAt: Date;
+  version: number;
+  tags: string[];
+  status: DocumentStatus;
+  parentId: string | null;
+  children: Document[];
+  metadata: DocumentMetadata;
+}
+
+export type DocumentStatus = 'draft' | 'published' | 'archived' | 'deleted';
+
+export interface DocumentMetadata {
+  wordCount: number;
+  readingTime: number;
+  language: string;
+  categories: string[];
+  relatedIds: string[];
+}
+
+// types/analytics.ts
+export interface AnalyticsEvent {
+  id: string;
+  type: EventType;
+  userId: string;
+  sessionId: string;
+  timestamp: Date;
+  properties: Record<string, unknown>;
+  source: string;
+  platform: 'web' | 'ios' | 'android' | 'api';
+}
+
+export type EventType =
+  | 'page_view'
+  | 'click'
+  | 'form_submit'
+  | 'error'
+  | 'api_call'
+  | 'file_upload'
+  | 'search'
+  | 'filter_apply'
+  | 'export'
+  | 'import';
+
+export interface AnalyticsSummary {
+  period: { start: Date; end: Date };
+  totalEvents: number;
+  uniqueUsers: number;
+  eventsByType: Record<EventType, number>;
+  eventsByPlatform: Record<string, number>;
+  topPages: Array<{ path: string; views: number }>;
+  errorRate: number;
+  avgSessionDuration: number;
+}`,
+
+  service: `
+// services/authService.ts
+import { User, UserRole } from '../types/user';
+import { ValidationError, AuthenticationError } from '../errors';
+import { hashPassword, verifyPassword, generateToken } from '../utils/crypto';
+import { rateLimiter } from '../middleware/rateLimiter';
+import { logger } from '../utils/logger';
+import { redisClient } from '../config/redis';
+
+export class AuthService {
+  private readonly sessionStore: Map<string, UserSession>;
+  private readonly refreshTokens: Map<string, RefreshTokenData>;
+  private readonly otpCodes: Map<string, OTPData>;
+
+  constructor(private readonly userRepo: UserRepository) {
+    this.sessionStore = new Map();
+    this.refreshTokens = new Map();
+    this.otpCodes = new Map();
+  }
+
+  async login(email: string, password: string, options?: LoginOptions): Promise<LoginResult> {
+    const startTime = Date.now();
+    const ip = options?.ipAddress || 'unknown';
+
+    // Rate limiting check
+    const limitResult = await rateLimiter.check(ip, 'login', 5, 60000);
+    if (!limitResult.allowed) {
+      logger.warn(\`Rate limit exceeded for login from IP: \${ip}\`);
+      throw new AuthenticationError('너무 많은 로그인 시도입니다. 잠시 후 다시 시도해주세요.');
+    }
+
+    // Find user by email
+    const user = await this.userRepo.findByEmail(email);
+    if (!user) {
+      logger.info(\`Login attempt for non-existent email: \${email} from \${ip}\`);
+      // Use constant-time comparison to prevent timing attacks
+      await verifyPassword(password, '$2b$10$dummyHashForTimingAttackPrevention1234567890');
+      throw new AuthenticationError('이메일 또는 비밀번호가 올바르지 않습니다.');
+    }
+
+    // Check if account is active
+    if (user.status === 'banned') {
+      logger.warn(\`Login attempt for banned user: \${user.id} from \${ip}\`);
+      throw new AuthenticationError('이 계정은 정지되었습니다.');
+    }
+
+    if (user.status === 'suspended') {
+      throw new AuthenticationError('이 계정은 일시 정지되었습니다. 관리자에게 문의하세요.');
+    }
+
+    // Verify password
+    const isPasswordValid = await verifyPassword(password, user.passwordHash);
+    if (!isPasswordValid) {
+      logger.warn(\`Invalid password for user: \${user.id} from \${ip}\`);
+      const attempts = await this.getFailedLoginAttempts(user.id);
+      const maxAttempts = 5;
+
+      if (attempts >= maxAttempts) {
+        await this.lockAccount(user.id, 30 * 60 * 1000); // 30 minutes
+        throw new AuthenticationError(
+          \`계정이 잠겼습니다. \${30}분 후 다시 시도해주세요.\`
+        );
+      }
+
+      await this.incrementFailedAttempts(user.id);
+      const remaining = maxAttempts - attempts - 1;
+      throw new AuthenticationError(
+        \`이메일 또는 비밀번호가 올바르지 않습니다. 나머지 시도 횟수: \${remaining}\`
+      );
+    }
+
+    // Check two-factor authentication
+    if (user.twoFactorEnabled && options?.twoFactorCode) {
+      const isValid = await this.verifyTwoFactorCode(user.id, options.twoFactorCode);
+      if (!isValid) {
+        throw new AuthenticationError('인증 코드가 올바르지 않습니다.');
+      }
+    }
+
+    // Reset failed attempts on successful login
+    await this.resetFailedAttempts(user.id);
+
+    // Create session
+    const session = await this.createSession(user, { ip, userAgent: options?.userAgent });
+
+    // Generate tokens
+    const accessToken = generateToken({ userId: user.id, role: user.role }, '15m');
+    const refreshToken = generateToken({ userId: user.id, type: 'refresh' }, '7d');
+
+    // Store refresh token
+    this.refreshTokens.set(refreshToken, {
+      userId: user.id,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      ipAddress: ip,
+    });
+
+    const duration = Date.now() - startTime;
+    logger.info(\`Successful login for user \${user.id} in \${duration}ms\`);
+
+    return {
+      user: this.sanitizeUser(user),
+      session,
+      accessToken,
+      refreshToken,
+      twoFactorRequired: user.twoFactorEnabled && !options?.twoFactorCode,
+    };
+  }
+
+  async refreshToken(refreshToken: string): Promise<AccessTokenResult> {
+    const tokenData = this.refreshTokens.get(refreshToken);
+    if (!tokenData) {
+      throw new AuthenticationError('무효화된 리프레시 토큰입니다.');
+    }
+
+    if (tokenData.expiresAt < new Date()) {
+      this.refreshTokens.delete(refreshToken);
+      throw new AuthenticationError('만료된 리프레시 토큰입니다.');
+    }
+
+    const user = await this.userRepo.findById(tokenData.userId);
+    if (!user || user.status !== 'active') {
+      this.refreshTokens.delete(refreshToken);
+      throw new AuthenticationError('사용자 계정을 찾을 수 없습니다.');
+    }
+
+    const newAccessToken = generateToken({ userId: user.id, role: user.role }, '15m');
+
+    return {
+      accessToken: newAccessToken,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+    };
+  }
+
+  async logout(sessionId: string): Promise<void> {
+    this.sessionStore.delete(sessionId);
+    logger.info(\`Session \${sessionId} terminated\`);
+  }
+
+  async createOTP(userId: string): Promise<OTPResult> {
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    this.otpCodes.set(userId, { code, expiresAt, createdAt: new Date() });
+
+    // In production, send via email/SMS
+    logger.info(\`OTP generated for user \${userId}\`);
+
+    return {
+      expiresAt,
+      expiresInSeconds: 300,
+    };
+  }
+
+  private async createSession(user: User, options: SessionOptions): Promise<UserSession> {
+    const sessionId = generateToken({ random: crypto.randomUUID() }, '1h');
+    const session: UserSession = {
+      id: sessionId,
+      userId: user.id,
+      createdAt: new Date(),
+      lastActive: new Date(),
+      ipAddress: options.ipAddress,
+      userAgent: options.userAgent || 'unknown',
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    };
+
+    this.sessionStore.set(sessionId, session);
+
+    // Cache in Redis for distributed sessions
+    await redisClient.set(
+      \`session:\${sessionId}\`,
+      JSON.stringify(session),
+      'EX',
+      86400
+    );
+
+    return session;
+  }
+
+  private sanitizeUser(user: User): SanitizedUser {
+    const { passwordHash, twoFactorSecret, ...safeUser } = user;
+    return safeUser as unknown as SanitizedUser;
+  }
+}`,
+
+  controller: `
+// controllers/documentController.ts
+import { Request, Response } from 'express';
+import { Document, DocumentStatus } from '../types/document';
+import { DocumentService } from '../services/documentService';
+import { ValidationError, NotFoundError, PermissionError } from '../errors';
+import { paginate, parseSearchParams } from '../utils/pagination';
+import { logger } from '../utils/logger';
+import { cache } from '../middleware/cache';
+import { validateRequestBody } from '../middleware/validation';
+
+export class DocumentController {
+  constructor(private readonly documentService: DocumentService) {}
+
+  @cache({ ttl: 300, keyPrefix: 'docs:list' })
+  async index(req: Request, res: Response) {
+    const { page, limit, sort, order, search, tags, status, authorId } =
+      parseSearchParams(req.query);
+
+    try {
+      const filter = {
+        status: status as DocumentStatus | undefined,
+        authorId,
+        tags: tags?.split(','),
+        searchQuery: search,
+      };
+
+      const result = await this.documentService.findAll(filter, {
+        page,
+        limit,
+        sort: sort || 'updatedAt',
+        order: order || 'desc',
+      });
+
+      const transformed = result.items.map(doc =>
+        this.transformDocument(doc)
+      );
+
+      return res.json({
+        data: transformed,
+        pagination: {
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: result.totalPages,
+          hasNext: result.page < result.totalPages,
+          hasPrev: result.page > 1,
+        },
+        meta: {
+          requestDuration: result.duration,
+          cacheHit: res.getHeader('X-Cache') === 'HIT',
+        },
+      });
+    } catch (error) {
+      logger.error('Failed to fetch documents:', error);
+      return res.status(500).json({
+        error: '서버 오류가 발생했습니다.',
+        code: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  @cache({ ttl: 60, keyPrefix: 'docs:detail' })
+  async show(req: Request, res: Response) {
+    const { id } = req.params;
+    const user = res.locals.user;
+
+    try {
+      const document = await this.documentService.findById(id);
+      if (!document) {
+        return res.status(404).json({
+          error: '문서를 찾을 수 없습니다.',
+          code: 'DOCUMENT_NOT_FOUND',
+        });
+      }
+
+      // Check access permissions
+      if (!this.documentService.canAccess(document, user)) {
+        return res.status(403).json({
+          error: '이 문서에 접근할 권한이 없습니다.',
+          code: 'ACCESS_DENIED',
+        });
+      }
+
+      // Increment view count
+      await this.documentService.incrementViews(id);
+
+      return res.json({
+        data: this.transformDocument(document),
+        meta: {
+          requestDuration: 0,
+          cacheHit: res.getHeader('X-Cache') === 'HIT',
+        },
+      });
+    } catch (error) {
+      logger.error(\`Failed to fetch document \${id}:\`, error);
+      return res.status(500).json({
+        error: '서버 오류가 발생했습니다.',
+        code: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  async store(req: Request, res: Response) {
+    const user = res.locals.user;
+    const validatedBody = req.validatedBody;
+
+    try {
+      const document = await this.documentService.create({
+        ...validatedBody,
+        authorId: user.id,
+      });
+
+      logger.info(\`Document created: \${document.id} by user \${user.id}\`);
+
+      return res.status(201).json({
+        data: this.transformDocument(document),
+        message: '문서가 성공적으로 생성되었습니다.',
+      });
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        return res.status(400).json({
+          error: error.message,
+          code: 'VALIDATION_ERROR',
+          details: error.details,
+        });
+      }
+
+      logger.error('Failed to create document:', error);
+      return res.status(500).json({
+        error: '문서 생성 중 오류가 발생했습니다.',
+        code: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  async update(req: Request, res: Response) {
+    const { id } = req.params;
+    const user = res.locals.user;
+    const validatedBody = req.validatedBody;
+
+    try {
+      const existing = await this.documentService.findById(id);
+      if (!existing) {
+        return res.status(404).json({
+          error: '문서를 찾을 수 없습니다.',
+          code: 'DOCUMENT_NOT_FOUND',
+        });
+      }
+
+      if (!this.documentService.canEdit(existing, user)) {
+        return res.status(403).json({
+          error: '이 문서를 수정할 권한이 없습니다.',
+          code: 'EDIT_DENIED',
+        });
+      }
+
+      const updated = await this.documentService.update(id, {
+        ...validatedBody,
+        updatedBy: user.id,
+        version: existing.version + 1,
+      });
+
+      return res.json({
+        data: this.transformDocument(updated),
+        message: '문서가 성공적으로 업데이트되었습니다.',
+      });
+    } catch (error) {
+      if (error instanceof ValidationError) {
+        return res.status(400).json({
+          error: error.message,
+          code: 'VALIDATION_ERROR',
+          details: error.details,
+        });
+      }
+      logger.error(\`Failed to update document \${id}:\`, error);
+      return res.status(500).json({
+        error: '문서 업데이트 중 오류가 발생했습니다.',
+        code: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  async destroy(req: Request, res: Response) {
+    const { id } = req.params;
+    const user = res.locals.user;
+
+    try {
+      const existing = await this.documentService.findById(id);
+      if (!existing) {
+        return res.status(404).json({
+          error: '문서를 찾을 수 없습니다.',
+          code: 'DOCUMENT_NOT_FOUND',
+        });
+      }
+
+      if (!this.documentService.canDelete(existing, user)) {
+        return res.status(403).json({
+          error: '이 문서를 삭제할 권한이 없습니다.',
+          code: 'DELETE_DENIED',
+        });
+      }
+
+      await this.documentService.softDelete(id, user.id);
+
+      return res.json({
+        message: '문서가 성공적으로 삭제되었습니다.',
+      });
+    } catch (error) {
+      logger.error(\`Failed to delete document \${id}:\`, error);
+      return res.status(500).json({
+        error: '문서 삭제 중 오류가 발생했습니다.',
+        code: 'INTERNAL_ERROR',
+      });
+    }
+  }
+
+  private transformDocument(doc: Document): TransformedDocument {
+    return {
+      id: doc.id,
+      title: doc.title,
+      summary: doc.content.substring(0, 200),
+      status: doc.status,
+      tags: doc.tags,
+      version: doc.version,
+      createdAt: doc.createdAt.toISOString(),
+      updatedAt: doc.updatedAt.toISOString(),
+      author: {
+        id: doc.authorId,
+      },
+      metadata: doc.metadata,
+      children: doc.children.map(c => ({ id: c.id, title: c.title })),
+    };
+  }
+}`,
+
+  repository: `
+// repositories/baseRepository.ts
+import { Pool, PoolClient } from 'pg';
+import { logger } from '../utils/logger';
+import { DatabaseError, NotFoundError } from '../errors';
+
+export interface QueryBuilder {
+  select(columns?: string[]): QueryBuilder;
+  from(table: string): QueryBuilder;
+  where(condition: string, params?: any[]): QueryBuilder;
+  orderBy(column: string, direction?: 'ASC' | 'DESC'): QueryBuilder;
+  limit(count: number): QueryBuilder;
+  offset(count: number): QueryBuilder;
+  join(
+    table: string,
+    condition: string,
+    type?: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL'
+  ): QueryBuilder;
+  groupBy(column: string): QueryBuilder;
+  having(condition: string, params?: any[]): QueryBuilder;
+  count(column?: string): Promise<number>;
+  first(): Promise<Record<string, any> | null>;
+  all(): Promise<Record<string, any>[]>;
+  execute(): Promise<QueryResult>;
+  getSQL(): string;
+  getParams(): any[];
+}
+
+export class BaseQueryBuilder implements QueryBuilder {
+  protected sql = 'SELECT ';
+  protected columns: string[] = ['*'];
+  protected table = '';
+  protected whereClauses: string[] = [];
+  protected params: any[] = [];
+  protected orderClause = '';
+  protected limitClause = '';
+  protected offsetClause = '';
+  protected joinClauses: string[] = [];
+  protected groupClause = '';
+  protected havingClause = '';
+  protected isCount = false;
+
+  select(columns: string[]): this {
+    this.columns = columns;
+    this.isCount = false;
+    return this;
+  }
+
+  from(table: string): this {
+    this.table = table;
+    return this;
+  }
+
+  where(condition: string, params: any[] = []): this {
+    this.whereClauses.push(condition);
+    this.params.push(...params);
+    return this;
+  }
+
+  orderBy(column: string, direction: 'ASC' | 'DESC' = 'ASC'): this {
+    this.orderClause = \`ORDER BY \${column} \${direction}\`;
+    return this;
+  }
+
+  limit(count: number): this {
+    this.limitClause = \`LIMIT \${count}\`;
+    return this;
+  }
+
+  offset(count: number): this {
+    this.offsetClause = \`OFFSET \${count}\`;
+    return this;
+  }
+
+  join(
+    table: string,
+    condition: string,
+    type: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL' = 'INNER'
+  ): this {
+    this.joinClauses.push(\`\${type} JOIN \${table} ON \${condition}\`);
+    return this;
+  }
+
+  groupBy(column: string): this {
+    this.groupClause = \`GROUP BY \${column}\`;
+    return this;
+  }
+
+  having(condition: string, params: any[] = []): this {
+    this.havingClause = \`HAVING \${condition}\`;
+    this.params.push(...params);
+    return this;
+  }
+
+  async count(column: string = '*'): Promise<number> {
+    this.isCount = true;
+    this.columns = [ \`COUNT(\${column}) AS count\` ];
+    const result = await this.first();
+    return parseInt(result.count, 10);
+  }
+
+  getSQL(): string {
+    let sql = '';
+
+    if (this.isCount) {
+      sql = 'SELECT ';
+    } else {
+      sql = 'SELECT ';
+    }
+
+    sql += this.columns.join(', ');
+    sql += \` FROM \${this.table}\`;
+
+    if (this.joinClauses.length > 0) {
+      sql += ' ' + this.joinClauses.join(' ');
+    }
+
+    if (this.whereClauses.length > 0) {
+      sql += ' WHERE ' + this.whereClauses.join(' AND ');
+    }
+
+    if (this.groupClause) {
+      sql += ' ' + this.groupClause;
+    }
+
+    if (this.havingClause) {
+      sql += ' ' + this.havingClause;
+    }
+
+    if (this.orderClause) {
+      sql += ' ' + this.orderClause;
+    }
+
+    if (this.limitClause) {
+      sql += ' ' + this.limitClause;
+    }
+
+    if (this.offsetClause) {
+      sql += ' ' + this.offsetClause;
+    }
+
+    return sql;
+  }
+
+  getParams(): any[] {
+    return [...this.params];
+  }
+
+  async first(): Promise<Record<string, any> | null> {
+    const sql = this.getSQL();
+    const params = this.getParams();
+
+    try {
+      const client = await Pool.connect();
+      try {
+        const result = await client.query(sql, params);
+        return result.rows[0] || null;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      logger.error('Database query failed:', { sql, params, error });
+      throw new DatabaseError('데이터베이스 쿼리 실패', {
+        cause: error,
+        query: sql,
+        params,
+      });
+    }
+  }
+
+  async all(): Promise<Record<string, any>[]> {
+    const sql = this.getSQL();
+    const params = this.getParams();
+
+    try {
+      const client = await Pool.connect();
+      try {
+        const result = await client.query(sql, params);
+        return result.rows;
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      logger.error('Database query failed:', { sql, params, error });
+      throw new DatabaseError('데이터베이스 쿼리 실패', {
+        cause: error,
+        query: sql,
+        params,
+      });
+    }
+  }
+
+  async execute(): Promise<QueryResult> {
+    const sql = this.getSQL();
+    const params = this.getParams();
+
+    try {
+      const client = await Pool.connect();
+      try {
+        const result = await client.query(sql, params);
+        return {
+          rows: result.rows,
+          rowCount: result.rowCount,
+          command: result.command,
+        };
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      logger.error('Database execute failed:', { sql, params, error });
+      throw new DatabaseError('데이터베이스 실행 실패', {
+        cause: error,
+        query: sql,
+        params,
+      });
+    }
+  }
+}
+
+export abstract class BaseRepository<T> {
+  protected constructor(
+    protected readonly tableName: string,
+    protected readonly pool: Pool
+  ) {}
+
+  protected buildQuery(): BaseQueryBuilder {
+    return new BaseQueryBuilder();
+  }
+
+  abstract findById(id: string): Promise<T | null>;
+  abstract findAll(options?: FindOptions): Promise<PaginatedResult<T>>;
+  abstract create(data: CreateInput<T>): Promise<T>;
+  abstract update(id: string, data: UpdateInput<T>): Promise<T>;
+  abstract delete(id: string): Promise<boolean>;
+}
+`,
+
+  middleware: `
+// middleware/rateLimiter.ts
+import { RateLimitEntry, RateLimitConfig } from '../types/rateLimit';
+import { logger } from '../utils/logger';
+import { redisClient } from '../config/redis';
+
+export class RateLimiter {
+  private localStore: Map<string, RateLimitEntry>;
+  private cleanupInterval: NodeJS.Timeout;
+
+  constructor(
+    private readonly config: RateLimitConfig = {
+      defaultMaxRequests: 100,
+      defaultWindowMs: 60000,
+      useRedis: process.env.NODE_ENV === 'production',
+    }
+  ) {
+    this.localStore = new Map();
+    // Cleanup expired entries every 60 seconds
+    this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+  }
+
+  async check(
+    identifier: string,
+    key: string,
+    maxRequests?: number,
+    windowMs?: number
+  ): Promise<RateLimitResult> {
+    const limit = maxRequests ?? this.config.defaultMaxRequests;
+    const window = windowMs ?? this.config.defaultWindowMs;
+    const fullKey = \`\${identifier}:\${key}\`;
+    const now = Date.now();
+
+    if (this.config.useRedis) {
+      return this.checkRedis(fullKey, limit, window, now);
+    }
+
+    return this.checkLocal(fullKey, limit, window, now);
+  }
+
+  private async checkRedis(
+    key: string,
+    limit: number,
+    window: number,
+    now: number
+  ): Promise<RateLimitResult> {
+    try {
+      const pipeline = redisClient.pipeline();
+      const windowStart = now - window;
+
+      // Remove old entries outside the window
+      pipeline.zremrangebyscore(key, 0, windowStart);
+
+      // Count current entries in window
+      pipeline.zcard(key);
+
+      // Add current request
+      pipeline.zadd(key, now, \`\${now}:\${Math.random()}\`);
+
+      // Set expiry
+      pipeline.expire(key, Math.ceil(window / 1000));
+
+      const results = await pipeline.exec();
+      const currentCount = (results[1] as any)[1];
+
+      const remaining = Math.max(0, limit - currentCount - 1);
+      const resetTime = now + window;
+
+      return {
+        allowed: currentCount < limit,
+        limit,
+        remaining,
+        resetTime,
+        retryAfter: currentCount >= limit ? Math.ceil(window / 1000) : 0,
+      };
+    } catch (error) {
+      logger.error('Redis rate limit check failed:', error);
+      // Fallback to local on Redis failure
+      return this.checkLocal(key, limit, window, now);
+    }
+  }
+
+  private checkLocal(
+    key: string,
+    limit: number,
+    window: number,
+    now: number
+  ): RateLimitResult {
+    const entry = this.localStore.get(key);
+
+    if (!entry || entry.windowStart < now - window) {
+      this.localStore.set(key, {
+        windowStart: now,
+        count: 1,
+        timestamps: [now],
+      });
+
+      return {
+        allowed: true,
+        limit,
+        remaining: limit - 1,
+        resetTime: now + window,
+        retryAfter: 0,
+      };
+    }
+
+    // Filter timestamps within window
+    entry.timestamps = entry.timestamps.filter(t => t >= now - window);
+    entry.windowStart = now;
+    entry.count = entry.timestamps.length;
+
+    const resetTime = now + window;
+    const remaining = Math.max(0, limit - entry.count - 1);
+
+    if (entry.count >= limit) {
+      return {
+        allowed: false,
+        limit,
+        remaining: 0,
+        resetTime,
+        retryAfter: Math.ceil((resetTime - now) / 1000),
+      };
+    }
+
+    entry.timestamps.push(now);
+    entry.count++;
+
+    return {
+      allowed: true,
+      limit,
+      remaining: limit - entry.count,
+      resetTime,
+      retryAfter: 0,
+    };
+  }
+
+  private cleanup(): void {
+    const now = Date.now();
+    let cleaned = 0;
+
+    for (const [key, entry] of this.localStore.entries()) {
+      if (now - entry.windowStart > 120000) {
+        this.localStore.delete(key);
+        cleaned++;
+      }
+    }
+
+    if (cleaned > 0) {
+      logger.debug(\`Cleaned \${cleaned} expired rate limit entries\`);
+    }
+  }
+
+  shutdown(): void {
+    clearInterval(this.cleanupInterval);
+    this.localStore.clear();
+  }
+}
+
+// middleware/cache.ts
+import { Response } from 'express';
+import { redisClient } from '../config/redis';
+import { logger } from '../utils/logger';
+
+export interface CacheOptions {
+  ttl: number;
+  keyPrefix: string;
+  skipIfHasParam?: string[];
+  varyBy?: string[];
+}
+
+export function cache(options: CacheOptions) {
+  return function (
+    target: any,
+    propertyKey: string,
+    descriptor: PropertyDescriptor
+  ) {
+    const originalMethod = descriptor.value;
+
+    descriptor.value = async function (...args: any[]) {
+      const req = args[0];
+      const res = args[1];
+
+      // Skip caching if request has certain params
+      if (options.skipIfHasParam) {
+        for (const param of options.skipIfHasParam) {
+          if (req.query[param] || req.params[param]) {
+            return originalMethod.apply(this, args);
+          }
+        }
+      }
+
+      const cacheKey = buildCacheKey(req, options);
+
+      try {
+        // Try to serve from cache
+        const cached = await redisClient.get(cacheKey);
+        if (cached) {
+          const { data, statusCode, headers } = JSON.parse(cached);
+          logger.debug(\`Cache HIT for \${cacheKey}\`);
+          res.set('X-Cache', 'HIT');
+          if (headers) res.set(headers);
+          return res.status(statusCode).json(data);
+        }
+
+        // Execute original handler
+        const result = await originalMethod.apply(this, args);
+
+        // Cache the response
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          const cacheData = JSON.stringify({
+            data: res.locals.data,
+            statusCode: res.statusCode,
+            headers: res.getHeaders(),
+          });
+
+          await redisClient.set(cacheKey, cacheData, 'EX', options.ttl);
+          res.set('X-Cache', 'MISS');
+        }
+
+        return result;
+      } catch (error) {
+        logger.error(\`Cache middleware error for \${cacheKey}:\`, error);
+        return originalMethod.apply(this, args);
+      }
+    };
+
+    return descriptor;
+  };
+}
+
+function buildCacheKey(req: Request, options: CacheOptions): string {
+  const parts = [options.keyPrefix, req.method, req.originalUrl];
+
+  if (options.varyBy) {
+    for (const header of options.varyBy) {
+      parts.push(\${header}=\${req.headers[header] || 'none'});
+    }
+  }
+
+  const raw = parts.join(':');
+  // Simple hash to keep keys short
+  return 'cache:' + require('crypto').createHash('sha256').update(raw).digest('hex').substring(0, 32);
+}
+`,
+
+  hook: `
+// hooks/useWebSocket.ts
+import { useEffect, useRef, useCallback, useState } from 'react';
+import { WebSocketClient, Message } from '../lib/websocket';
+import { logger } from '../utils/logger';
+
+interface UseWebSocketOptions<T = any> {
+  url: string;
+  protocols?: string[];
+  onMessage?: (event: MessageEvent<T>) => void;
+  onOpen?: () => void;
+  onClose?: (event: CloseEvent) => void;
+  onError?: (event: ErrorEvent) => void;
+  shouldReconnect?: boolean;
+  reconnectInterval?: number;
+  maxReconnectAttempts?: number;
+  heartbeatInterval?: number;
+  auth_token?: string;
+  debug?: boolean;
+}
+
+export function useWebSocket<T = any>(options: UseWebSocketOptions<T>) {
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [lastMessage, setLastMessage] = useState<Message<T> | null>(null);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const [error, setError] = useState<Error | null>(null);
+
+  const clientRef = useRef<WebSocketClient | null>(null);
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const messageQueueRef = useRef<T[]>([]);
+  const isMountedRef = useRef(true);
+
+  const maxAttempts = options.maxReconnectAttempts ?? 5;
+  const reconnectInterval = options.reconnectInterval ?? 3000;
+  const heartbeatInterval = options.heartbeatInterval ?? 30000;
+
+  const connect = useCallback(() => {
+    if (!isMountedRef.current) return;
+    if (clientRef.current?.readyState === WebSocket.OPEN) return;
+
+    setIsConnecting(true);
+    setError(null);
+
+    try {
+      const client = new WebSocketClient(options.url, {
+        protocols: options.protocols,
+        auth_token: options.auth_token,
+        debug: options.debug,
+      });
+
+      client.onOpen(() => {
+        if (!isMountedRef.current) return;
+        setIsConnected(true);
+        setIsConnecting(false);
+        setReconnectAttempts(0);
+
+        // Start heartbeat
+        startHeartbeat();
+
+        // Flush queued messages
+        const queued = [...messageQueueRef.current];
+        messageQueueRef.current = [];
+        queued.forEach(msg => client.send(msg));
+
+        options.onOpen?.();
+        logger.info('WebSocket connected');
+      });
+
+      client.onClose((event) => {
+        if (!isMountedRef.current) return;
+        setIsConnected(false);
+        setIsConnecting(false);
+        stopHeartbeat();
+
+        logger.info(\`WebSocket closed: code=\${event.code} reason=\${event.reason}\`);
+
+        if (options.shouldReconnect !== false && reconnectAttempts < maxAttempts) {
+          scheduleReconnect();
+        }
+
+        options.onClose?.(event);
+      });
+
+      client.onError((event) => {
+        if (!isMountedRef.current) return;
+        const err = new Error(\`WebSocket error: \${event.message}\`);
+        setError(err);
+        setIsConnected(false);
+        setIsConnecting(false);
+
+        options.onError?.(event);
+        logger.error('WebSocket error:', event);
+      });
+
+      client.onMessage((event) => {
+        if (!isMountedRef.current) return;
+
+        let data: T;
+        try {
+          data = JSON.parse(event.data) as T;
+        } catch {
+          data = event.data as unknown as T;
+        }
+
+        const message: Message<T> = {
+          id: crypto.randomUUID(),
+          data,
+          timestamp: new Date(),
+          type: (data as any).type || 'unknown',
+        };
+
+        setLastMessage(message);
+        options.onMessage?.(event as unknown as MessageEvent<T>);
+      });
+
+      clientRef.current = client;
+
+    } catch (err) {
+      logger.error('Failed to create WebSocket:', err);
+      setError(err as Error);
+      setIsConnecting(false);
+    }
+  }, [options.url, options.shouldReconnect]);
+
+  const disconnect = useCallback((code: number = 1000, reason = '') => {
+    stopHeartbeat();
+    clearReconnectTimer();
+
+    if (clientRef.current) {
+      clientRef.current.close(code, reason);
+      clientRef.current = null;
+    }
+
+    setIsConnected(false);
+    setIsConnecting(false);
+  }, []);
+
+  const send = useCallback((data: T) => {
+    if (!clientRef.current?.readyState === WebSocket.OPEN) {
+      messageQueueRef.current.push(data);
+      logger.warn('Message queued (not connected)');
+      return false;
+    }
+
+    try {
+      clientRef.current.send(data);
+      return true;
+    } catch (err) {
+      logger.error('Failed to send message:', err);
+      return false;
+    }
+  }, []);
+
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimerRef.current) return;
+
+    reconnectTimerRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      setReconnectAttempts(prev => prev + 1);
+      reconnectTimerRef.current = null;
+      connect();
+    }, reconnectInterval * (reconnectAttempts + 1));
+  }, [connect, reconnectInterval, reconnectAttempts]);
+
+  const startHeartbeat = useCallback(() => {
+    stopHeartbeat();
+    heartbeatTimerRef.current = setInterval(() => {
+      if (clientRef.current?.readyState === WebSocket.OPEN) {
+        clientRef.current.ping();
+      }
+    }, heartbeatInterval);
+  }, [heartbeatInterval]);
+
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
+    }
+  }, []);
+
+  const clearReconnectTimer = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    connect();
+
+    return () => {
+      isMountedRef.current = false;
+      disconnect();
+    };
+  }, [connect, disconnect]);
+
+  return {
+    isConnected,
+    isConnecting,
+    lastMessage,
+    reconnectAttempts,
+    error,
+    connect,
+    disconnect,
+    send,
+  };
+}
+`,
+
+  component: `
+// components/DataGrid/DataGrid.tsx
+import React, { useMemo, useCallback, useState, useEffect } from 'react';
+import { useGridState } from '../../hooks/useGridState';
+import { useSortState } from '../../hooks/useSortState';
+import { useFilterState } from '../../hooks/useFilterState';
+import { ColumnDef, GridRow, GridCellValue } from '../../types/grid';
+import { SortDirection, FilterOperator } from '../../types/common';
+import * as S from './DataGrid.styles';
+
+export interface DataGridProps<T extends GridRow> {
+  columns: ColumnDef<T>[];
+  data: T[];
+  loading?: boolean;
+  error?: Error | null;
+  onRowClick?: (row: T) => void;
+  onSelectionChange?: (selectedRows: T[]) => void;
+  rowHeight?: number;
+  virtualized?: boolean;
+  selectable?: boolean;
+  sortable?: boolean;
+  filterable?: boolean;
+  resizable?: boolean;
+  striped?: boolean;
+  dense?: boolean;
+  emptyMessage?: string;
+  className?: string;
+  style?: React.CSSProperties;
+}
+
+export function DataGrid<T extends GridRow>(props: DataGridProps<T>) {
+  const {
+    columns,
+    data,
+    loading = false,
+    error = null,
+    onRowClick,
+    onSelectionChange,
+    rowHeight = 40,
+    virtualized = true,
+    selectable = false,
+    sortable = true,
+    filterable = false,
+    resizable = false,
+    striped = true,
+    dense = false,
+    emptyMessage = '데이터가 없습니다.',
+    className = '',
+    style,
+  } = props;
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [resizingColumn, setResizingColumn] = useState<string | null>(null);
+
+  const gridState = useGridState({
+    columns,
+    data,
+    virtualized,
+    rowHeight: dense ? rowHeight - 8 : rowHeight,
+  });
+
+  const { sortedData, sortConfig, handleSort } = useSortState({
+    data,
+    enabled: sortable,
+    defaultSort: { column: columns[0]?.accessor, direction: SortDirection.ASC },
+  });
+
+  const { filteredData, filterConfig, setFilter } = useFilterState({
+    data: sortedData,
+    enabled: filterable,
+  });
+
+  const displayData = filteredData;
+
+  const isSelected = useCallback(
+    (row: T) => selectedIds.has(String(row.id)),
+    [selectedIds]
+  );
+
+  const toggleRowSelection = useCallback(
+    (row: T) => {
+      const newSelected = new Set(selectedIds);
+      if (newSelected.has(String(row.id))) {
+        newSelected.delete(String(row.id));
+      } else {
+        newSelected.add(String(row.id));
+      }
+      setSelectedIds(newSelected);
+      onSelectionChange?.(
+        displayData.filter(r => newSelected.has(String(r.id)))
+      );
+    },
+    [selectedIds, displayData, onSelectionChange]
+  );
+
+  const selectAll = useCallback(() => {
+    const allIds = new Set(displayData.map(r => String(r.id)));
+    setSelectedIds(allIds);
+    onSelectionChange?.(displayData);
+  }, [displayData, onSelectionChange]);
+
+  const deselectAll = useCallback(() => {
+    setSelectedIds(new Set());
+    onSelectionChange?.([]);
+  }, [onSelectionChange]);
+
+  const handleCellRender = useCallback(
+    (row: T, column: ColumnDef<T>) => {
+      const value = row[column.accessor as keyof T];
+
+      if (column.render) {
+        return column.render(value, row);
+      }
+
+      if (typeof value === 'object' && value !== null) {
+        return JSON.stringify(value);
+      }
+
+      return String(value ?? '');
+    },
+    [columns]
+  );
+
+  const handleColumnResize = useCallback(
+    (columnId: string) => (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setResizingColumn(columnId);
+
+      const startX = e.clientX;
+      const startWidth = columnWidths[columnId] || 150;
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const diff = moveEvent.clientX - startX;
+        const newWidth = Math.max(80, startWidth + diff);
+        setColumnWidths(prev => ({ ...prev, [columnId]: newWidth }));
+      };
+
+      const onMouseUp = () => {
+        setResizingColumn(null);
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    [columnWidths]
+  );
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [displayData.length]);
+
+  if (loading) {
+    return <S.LoadingOverlay>Loading...</S.LoadingOverlay>;
+  }
+
+  if (error) {
+    return <S.ErrorContainer>{error.message}</S.ErrorContainer>;
+  }
+
+  if (displayData.length === 0) {
+    return <S.EmptyState>{emptyMessage}</S.EmptyState>;
+  }
+
+  return (
+    <S.GridContainer className={className} style={style}>
+      <S.HeaderRow>
+        {selectable && (
+          <S.CheckboxCell>
+            <input
+              type="checkbox"
+              checked={
+                selectedIds.size > 0 &&
+                selectedIds.size === displayData.length
+              }
+              onChange={
+                selectedIds.size === displayData.length
+                  ? deselectAll
+                  : selectAll
+              }
+            />
+          </S.CheckboxCell>
+        )}
+        {columns.map(col => (
+          <S.HeaderCell
+            key={col.accessor}
+            style={{ width: columnWidths[col.accessor] || col.width || 150 }}
+            onClick={() => sortable && handleSort(col.accessor)}
+            className={sortConfig?.column === col.accessor ? 'sorted' : ''}
+          >
+            <S.HeaderContent>
+              {col.header || col.accessor}
+              {sortable && (
+                <S.SortIndicator
+                  active={sortConfig?.column === col.accessor}
+                  direction={sortConfig?.column === col.accessor ? sortConfig.direction : null}
+                >
+                  ↕
+                </S.SortIndicator>
+              )}
+            </S.HeaderContent>
+            {resizable && (
+              <S.ResizeHandle onMouseDown={handleColumnResize(col.accessor)} />
+            )}
+          </S.HeaderCell>
+        ))}
+      </S.HeaderRow>
+
+      <S.BodyWrapper virtualized={virtualized} rowHeight={dense ? rowHeight - 8 : rowHeight}>
+        {displayData.map((row, index) => (
+          <S.BodyRow
+            key={String(row.id)}
+            striped={striped && index % 2 === 1}
+            selected={isSelected(row)}
+            onClick={() => onRowClick?.(row)}
+          >
+            {selectable && (
+              <S.CheckboxCell>
+                <input
+                  type="checkbox"
+                  checked={isSelected(row)}
+                  onChange={() => toggleRowSelection(row)}
+                />
+              </S.CheckboxCell>
+            )}
+            {columns.map(col => (
+              <S.BodyCell key={col.accessor} align={col.align}>
+                {handleCellRender(row, col)}
+              </S.BodyCell>
+            ))}
+          </S.BodyRow>
+        ))}
+      </S.BodyWrapper>
+
+      <S.Footer>
+        <S.Cell>총 {displayData.length}건</S.Cell>
+        {selectable && (
+          <S.Cell>
+            선택 {selectedIds.size}건
+          </S.Cell>
+        )}
+      </S.Footer>
+    </S.GridContainer>
+  );
+}
+`,
+};
+
+function generateLargeCodebase(seed: number): string {
+  // seed 기반의 의사 난수 생성기 (LCG)
+  let state = seed;
+  const rand = () => {
+    state = (state * 1664525 + 1013904223) & 0xffffffff;
+    return (state >>> 0) / 0xffffffff;
+  };
+
+  const files = Object.values(CODEBASE_TEMPLATES);
+  const chunks: string[] = [];
+
+  // 코드베이스 헤더
+  chunks.push(
+    '// ========================================',
+    '// Large Codebase Context (benchmark payload)',
+    `\`// Generated: seed=\${seed}\``,
+    '// ========================================',
+    ''
+  );
+
+  // 각 템플릿을 그대로 포함 + 반복하여 충분히 크게 만듦
+  const sections = [
+    'types', 'service', 'controller', 'repository', 'middleware', 'hook', 'component'
+  ];
+
+  for (let iteration = 0; iteration < 3; iteration++) {
+    chunks.push(\`/* --- Iteration \${iteration + 1} / 3 --- */\`);
+    chunks.push('');
+
+    for (const key of sections) {
+      const template = CODEBASE_TEMPLATES[key];
+      chunks.push(template.trim());
+      chunks.push('');
+      chunks.push('');
+    }
+  }
+
+  // 추가 패딩: 더 많은 utility 함수 생성
+  chunks.push('/* --- Utility Module --- */');
+  chunks.push('');
+
+  for (let i = 0; i < 20; i++) {
+    chunks.push(\`\`);
+    chunks.push(\`// utils/module_\${i + 1}.ts\`);
+    chunks.push(\`export const MODULE_ID_\${i + 1} = 'module-\${String.fromCharCode(97 + (i % 26))}\${i}';\`);
+    chunks.push('');
+    chunks.push('export interface ModuleConfig {');
+    for (let j = 0; j < 10; j++) {
+      chunks.push(\`  field\${j + 1}: string | number | boolean | null;\`);
+    }
+    chunks.push('}');
+    chunks.push('');
+    chunks.push('export function processModuleData(input: ModuleConfig): ProcessedResult {');
+    chunks.push('  const result = {');
+    for (let j = 0; j < 10; j++) {
+      chunks.push(\`    field\${j + 1}: input.field\${j + 1} != null ? String(input.field\${j + 1}) : 'default',\`);
+    }
+    chunks.push('  };');
+    chunks.push('  return result as unknown as ProcessedResult;');
+    chunks.push('}');
+    chunks.push('');
+    chunks.push('export function validateModuleConfig(config: Partial<ModuleConfig>): boolean {');
+    chunks.push('  const requiredFields = [');
+    for (let j = 0; j < 10; j++) {
+      chunks.push(\`    'field\${j + 1}',\`);
+    }
+    chunks.push('  ];');
+    chunks.push('  return requiredFields.every(f => config[f as keyof ModuleConfig] != null);');
+    chunks.push('}');
+    chunks.push('');
+  }
+
+  return chunks.join('\n');
+}
+
 const PREFIX_POOL = [
   "먼저 오늘의 날짜는 {date}입니다. ",
   "참고로 현재 사용자의 위치는 {city} 지역입니다. ",
@@ -54,7 +1601,7 @@ function pickRandom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function varyPrompt(basePrompt) {
+function varyPrompt(basePrompt, includeCodebase = false) {
   const id = Math.floor(Math.random() * 999999);
   const n = Math.floor(Math.random() * 900) + 100;
   const city = pickRandom(["서울", "부산", "인천", "대구", "광주", "대전", "울산", "제주", "수원", "익산", "춘천", "강릉"]);
@@ -67,7 +1614,13 @@ function varyPrompt(basePrompt) {
   const suffix = pickRandom(SUFFIX_POOL)
     .replace("{id}", id).replace("{n}", n).replace("{city}", city).replace("{topic}", topic);
 
-  return `${prefix}본 질문: ${basePrompt} ${suffix}`;
+  let codebaseContext = "";
+  if (includeCodebase) {
+    const seed = Math.floor(Math.random() * 999999);
+    codebaseContext = `\n\n<!-- 참조 코드베이스 -->\n${generateLargeCodebase(seed)}\n`;
+  }
+
+  return `${codebaseContext}${prefix}본 질문: ${basePrompt} ${suffix}`;
 }
 
 // 현재 측정 상태
@@ -118,6 +1671,7 @@ app.post("/api/measure", async (req, res) => {
     autoWarmup = 2,
     autoPerRound = 3,
     varyPrompt = true,
+    includeCodebase = false,
   } = req.body;
 
   if (!baseUrl || !model || !prompt) {
@@ -147,7 +1701,8 @@ app.post("/api/measure", async (req, res) => {
       autoMaxConcurrent,
       autoWarmup,
       autoPerRound,
-      varyPrompt
+      varyPrompt,
+      includeCodebase
     ).finally(() => {
       measuring = false;
       broadcastSSE("bench-complete", { reason: "done" });
@@ -169,7 +1724,8 @@ app.post("/api/measure", async (req, res) => {
       temperature,
       rounds,
       apiKey,
-      varyPrompt
+      varyPrompt,
+      includeCodebase
     ).finally(() => {
       measuring = false;
       broadcastSSE("bench-complete", { reason: "done" });
@@ -275,7 +1831,8 @@ async function runManualBenchmark(
   temperature,
   rounds,
   apiKey,
-  varyPrompt
+  varyPrompt,
+  includeCodebase
 ) {
   const totalRuns = concurrent * rounds;
   let completed = 0;
@@ -285,7 +1842,7 @@ async function runManualBenchmark(
     for (let i = 0; i < concurrent; i++) {
       promises.push(
         runSingleRequest(
-          { baseUrl, model, prompt, maxTokens, temperature, apiKey, varyPrompt },
+          { baseUrl, model, prompt, maxTokens, temperature, apiKey, varyPrompt, includeCodebase },
           round * concurrent + i
         )
       );
@@ -324,7 +1881,8 @@ async function runAutoBenchmark(
   maxConcurrent,
   warmupRounds,
   perLevelRounds,
-  varyPrompt
+  varyPrompt,
+  includeCodebase
 ) {
   const profile = []; // [{ concurrent, avgTPS, totalTPS, avgLatency, success, failed }]
   let peakTotalTPS = 0;
@@ -347,7 +1905,8 @@ async function runAutoBenchmark(
     { baseUrl, model, prompt, maxTokens, temperature, apiKey },
     1,
     warmupRounds,
-    varyPrompt
+    varyPrompt,
+    includeCodebase
   );
   if (warmupResults.failed > 0 && warmupResults.success === 0) {
     console.error("[Auto] Warmup 실패 — 모델 연결을 확인하세요");
@@ -374,7 +1933,8 @@ async function runAutoBenchmark(
       { baseUrl, model, prompt, maxTokens, temperature, apiKey },
       conc,
       perLevelRounds,
-      varyPrompt
+      varyPrompt,
+      includeCodebase
     );
     results.push(...levelResults.results);
 
@@ -445,7 +2005,7 @@ async function runAutoBenchmark(
   );
 }
 
-async function runConcurrencyLevel(options, concurrent, rounds, varyPrompt) {
+async function runConcurrencyLevel(options, concurrent, rounds, varyPrompt, includeCodebase) {
   let success = 0;
   let failed = 0;
   const levelResults = [];
@@ -455,7 +2015,7 @@ async function runConcurrencyLevel(options, concurrent, rounds, varyPrompt) {
     for (let i = 0; i < concurrent; i++) {
       promises.push(
         runSingleRequest(
-          { ...options, varyPrompt },
+          { ...options, varyPrompt, includeCodebase },
           levelResults.length + failed + i
         )
       );
@@ -501,7 +2061,7 @@ async function runSingleRequest(options, index) {
 
   try {
     const actualPrompt = options.varyPrompt
-      ? varyPrompt(options.prompt)
+      ? varyPrompt(options.prompt, options.includeCodebase)
       : options.prompt;
     const stream = await chat.stream([new HumanMessage(actualPrompt)]);
     let fullText = "";

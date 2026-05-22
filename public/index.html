@@ -523,6 +523,10 @@
             <input type="checkbox" id="varyPrompt" checked />
             <label for="varyPrompt">프롬프트 변주 (vLLM 캐시 회피)</label>
           </div>
+          <div class="checkbox-group">
+            <input type="checkbox" id="includeCodebase" />
+            <label for="includeCodebase">대규모 코드베이스 포함 (실사용 모의)</label>
+          </div>
         </div>
 
         <!-- Auto mode settings -->
@@ -564,6 +568,10 @@
           <div class="checkbox-group">
             <input type="checkbox" id="autoVaryPrompt" checked />
             <label for="autoVaryPrompt">프롬프트 변주 (vLLM 캐시 회피)</label>
+          </div>
+          <div class="checkbox-group">
+            <input type="checkbox" id="autoIncludeCodebase" />
+            <label for="autoIncludeCodebase">대규모 코드베이스 포함 (실사용 모의)</label>
           </div>
         </div>
       </div>
@@ -692,12 +700,14 @@
         body.autoPerRound = parseInt(document.getElementById('autoPerRound').value) || 3;
         body.autoWarmup = parseInt(document.getElementById('autoWarmup').value) || 2;
         body.varyPrompt = document.getElementById('autoVaryPrompt').checked;
+        body.includeCodebase = document.getElementById('autoIncludeCodebase').checked;
       } else {
         body.concurrent = parseInt(document.getElementById('concurrent').value) || 1;
         body.rounds = parseInt(document.getElementById('rounds').value) || 1;
         body.maxTokens = parseInt(document.getElementById('maxTokens').value) || 1024;
         body.temperature = parseFloat(document.getElementById('temperature').value) || 0.7;
         body.varyPrompt = document.getElementById('varyPrompt').checked;
+        body.includeCodebase = document.getElementById('includeCodebase').checked;
       }
 
       const res = await fetch('/api/measure', {
