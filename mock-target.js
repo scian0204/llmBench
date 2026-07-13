@@ -21,6 +21,11 @@ function perRequestRate() {
 const WORDS = ["하늘", "바다", "구름", "바람", "나무", "강물", "별빛", "노을", "숲길", "파도"];
 
 const server = http.createServer((req, res) => {
+  if (req.method === "GET" && req.url.includes("/models")) {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ object: "list", data: [{ id: "mock-7b-instruct" }, { id: "mock-72b" }] }));
+    return;
+  }
   if (req.method !== "POST" || !req.url.includes("/chat/completions")) {
     res.writeHead(404).end();
     return;

@@ -702,6 +702,37 @@ app.get("/api/bench/state", (_req, res) => {
   res.json(snapshot());
 });
 
+// 대상 서버의 모델 목록 프록시 (브라우저 직접 호출은 CORS에 막힘)
+app.post("/api/models", async (req, res) => {
+  const { baseUrl, apiKey } = req.body || {};
+  try {
+    new URL(baseUrl);
+  } catch {
+    return res.status(400).json({ error: "baseUrl이 올바른 URL이 아닙니다" });
+  }
+  const headers = {};
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
+  try {
+    const r = await request(String(baseUrl).replace(/\/$/, "") + "/models", {
+      headers,
+      dispatcher,
+      headersTimeout: 5_000,
+      bodyTimeout: 5_000,
+    });
+    if (r.statusCode !== 200) {
+      const text = await r.body.text();
+      throw new Error(`HTTP ${r.statusCode}: ${text.slice(0, 200)}`);
+    }
+    const data = await r.body.json();
+    const models = (data.data || []).map((m) => String(m.id)).filter(Boolean);
+    res.json({ models });
+  } catch (err) {
+    // AggregateError(연결 거부 등)는 message가 비어 있어 code를 우선 노출
+    const msg = err?.code || err?.errors?.[0]?.code || err?.message || String(err);
+    res.status(502).json({ error: String(msg) });
+  }
+});
+
 // 실제 전송될 프롬프트 표본 1개 생성 (변주는 요청마다 달라짐)
 app.post("/api/bench/preview", (req, res) => {
   const { prompt, varyPrompt: vary, includeCodebase } = req.body || {};

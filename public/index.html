@@ -109,6 +109,9 @@
   input:focus, textarea:focus { border-color: var(--accent); }
   textarea { resize: vertical; min-height: 72px; }
   .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+  .model-row { display: flex; gap: 0.5rem; }
+  .model-row input { flex: 1; min-width: 0; }
+  .model-row .ghost-btn { align-self: stretch; flex: 0 0 auto; }
 
   .seg {
     display: grid;
@@ -324,7 +327,11 @@
       </div>
       <div class="field">
         <label>모델</label>
-        <input type="text" id="model" placeholder="Qwen/Qwen2.5-7B-Instruct" />
+        <div class="model-row">
+          <input type="text" id="model" list="modelList" placeholder="Qwen/Qwen2.5-7B-Instruct" />
+          <button type="button" class="ghost-btn" onclick="loadModels()">불러오기</button>
+        </div>
+        <datalist id="modelList"></datalist>
       </div>
     </div>
 
@@ -560,6 +567,30 @@ async function startBench() {
 
 async function stopBench() {
   await fetch("/api/bench/stop", { method: "POST" }).catch(() => {});
+}
+
+async function loadModels() {
+  const baseUrl = $("baseUrl").value.trim();
+  if (!baseUrl) {
+    $("formError").textContent = "URL을 먼저 입력하세요.";
+    return;
+  }
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  try {
+    const res = await fetch("/api/models", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ baseUrl, apiKey: $("apiKey").value || undefined }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || "실패");
+    if (!d.models.length) throw new Error("모델 목록이 비어 있습니다");
+    $("modelList").innerHTML = d.models.map((m) => `<option value="${esc(m)}">`).join("");
+    $("model").value = d.models[0];
+    $("formError").textContent = "";
+  } catch (err) {
+    $("formError").textContent = "모델 조회 실패: " + err.message;
+  }
 }
 
 async function previewPrompt() {
