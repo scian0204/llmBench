@@ -167,20 +167,78 @@
     cursor: pointer;
   }
   .ghost-btn:hover { color: var(--text); border-color: var(--accent); }
-  .preview-pane {
-    max-height: 220px;
-    overflow-y: auto;
-    background: var(--bg-raised);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 0.6rem;
+
+  /* 미리보기 모달 */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 2rem;
+  }
+  .modal {
+    width: min(1100px, 100%);
+    height: min(85vh, 100%);
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.8rem 1.1rem;
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  .modal-title { font-size: 13.5px; font-weight: 600; }
+  .modal-title .num { color: var(--text-dim); font-weight: 400; font-size: 12px; margin-left: 0.4rem; }
+  .modal-actions { margin-left: auto; display: flex; align-items: center; gap: 0.8rem; }
+  .modal-body { flex: 1; overflow-y: auto; padding: 1rem 1.2rem; }
+  .modal-body pre {
     font-family: var(--mono);
-    font-size: 11px;
-    line-height: 1.45;
+    font-size: 12px;
+    line-height: 1.55;
     color: var(--text-dim);
     white-space: pre-wrap;
     word-break: break-word;
   }
+  .modal-loading { color: var(--text-faint); font-size: 13px; }
+
+  /* 마크다운 렌더 */
+  .md { font-size: 13.5px; line-height: 1.65; color: var(--text); }
+  .md h1, .md h2, .md h3, .md h4 { margin: 1.1em 0 0.45em; line-height: 1.3; }
+  .md h1 { font-size: 1.35em; } .md h2 { font-size: 1.2em; } .md h3 { font-size: 1.05em; }
+  .md p { margin: 0.55em 0; }
+  .md ul, .md ol { margin: 0.55em 0; padding-left: 1.5em; }
+  .md code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+  }
+  .md pre {
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.8rem;
+    overflow-x: auto;
+    margin: 0.7em 0;
+  }
+  .md pre code { background: none; border: none; padding: 0; font-size: 12px; }
+  .md blockquote { border-left: 3px solid var(--line-strong); margin: 0.7em 0; padding-left: 0.9em; color: var(--text-dim); }
+  .md table { width: auto; margin: 0.7em 0; }
+  .md th, .md td { text-align: left; font-family: inherit; padding: 0.35rem 0.7rem; }
+  .md hr { border: none; border-top: 1px solid var(--line); margin: 1em 0; }
+  .md a { color: var(--accent); }
 
   /* ── 메인 ── */
   main { padding: 1.25rem 1.5rem 3rem; min-width: 0; }
@@ -345,8 +403,7 @@
       <div class="field">
         <label>프롬프트</label>
         <textarea id="prompt">인공지능의 미래에 대해 자유롭게 서술해주세요.</textarea>
-        <button type="button" class="ghost-btn" onclick="previewPrompt()">전송 프롬프트 미리보기</button>
-        <pre id="promptPreview" class="preview-pane hidden"></pre>
+        <button type="button" class="ghost-btn" onclick="openPreview()">전송 프롬프트 미리보기</button>
       </div>
 
       <div id="manualFields">
@@ -492,6 +549,27 @@
   </main>
 </div>
 
+<div id="previewModal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title">전송 프롬프트 미리보기<span class="num" id="previewChars"></span></span>
+      <div class="modal-actions">
+        <div class="check">
+          <input type="checkbox" id="previewMd" onchange="renderPreview()" />
+          <label for="previewMd">마크다운 렌더</label>
+        </div>
+        <button type="button" class="ghost-btn" onclick="refreshPreview()">변주 새로고침</button>
+        <button type="button" class="ghost-btn" onclick="closePreview()">닫기</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <pre id="previewRaw"></pre>
+      <div id="previewRendered" class="md hidden"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/marked.js"></script>
 <script>
 "use strict";
 
@@ -593,36 +671,73 @@ async function loadModels() {
   }
 }
 
-async function previewPrompt() {
-  const pane = $("promptPreview");
-  if (!pane.classList.contains("hidden")) { // 토글
-    pane.classList.add("hidden");
-    return;
-  }
+// ── 프롬프트 미리보기 모달 ────────────────────────────────────────
+let previewText = "";
+
+function openPreview() {
   const prompt = $("prompt").value.trim();
   if (!prompt) {
     $("formError").textContent = "프롬프트를 입력하세요.";
     return;
   }
+  $("formError").textContent = "";
+  $("previewModal").classList.remove("hidden");
+  refreshPreview();
+}
+
+function closePreview() {
+  $("previewModal").classList.add("hidden");
+}
+
+async function refreshPreview() {
+  const raw = $("previewRaw");
+  raw.textContent = "생성 중...";
+  raw.classList.remove("hidden");
+  $("previewRendered").classList.add("hidden");
   try {
     const res = await fetch("/api/bench/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        prompt,
+        prompt: $("prompt").value.trim(),
         varyPrompt: $("varyPrompt").checked,
         includeCodebase: $("includeCodebase").checked,
       }),
     });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || "실패");
-    pane.textContent = `표본 1개 (${d.chars.toLocaleString()}자, 변주 켜면 요청마다 달라짐)\n\n${d.preview}`;
-    pane.classList.remove("hidden");
-    $("formError").textContent = "";
+    previewText = d.preview;
+    $("previewChars").textContent = `${d.chars.toLocaleString()}자` +
+      ($("varyPrompt").checked ? " (표본 1개, 요청마다 달라짐)" : "");
+    renderPreview();
   } catch (err) {
-    $("formError").textContent = "미리보기 실패: " + err.message;
+    previewText = "";
+    raw.textContent = "미리보기 실패: " + err.message;
   }
 }
+
+function renderPreview() {
+  const useMd = $("previewMd").checked;
+  const raw = $("previewRaw");
+  const rendered = $("previewRendered");
+  if (useMd && previewText) {
+    rendered.innerHTML = marked.parse(previewText); // 로컬 생성 콘텐츠만 렌더 (외부 서버 응답 아님)
+    rendered.classList.remove("hidden");
+    raw.classList.add("hidden");
+  } else {
+    raw.textContent = previewText;
+    raw.classList.remove("hidden");
+    rendered.classList.add("hidden");
+  }
+}
+
+// 오버레이 클릭/ESC로 닫기
+$("previewModal").addEventListener("click", (e) => {
+  if (e.target === $("previewModal")) closePreview();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closePreview();
+});
 
 async function resetBench() {
   await fetch("/api/bench/reset", { method: "POST" }).catch(() => {});

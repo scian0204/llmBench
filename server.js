@@ -17,6 +17,7 @@
 //  GET  /api/bench/stream  SSE: state(500ms), request-start/end/error, tokens(100ms 배치), done
 
 const express = require("express");
+const path = require("node:path");
 const { Agent, request } = require("undici");
 
 const dispatcher = new Agent({
@@ -27,6 +28,10 @@ const dispatcher = new Agent({
 const app = express();
 app.use(express.json());
 app.use(express.static("public"));
+// 폐쇄망에서도 동작하도록 marked를 로컬 서빙 (CDN 미사용)
+app.get("/vendor/marked.js", (_req, res) => {
+  res.sendFile(path.join(__dirname, "node_modules/marked/lib/marked.umd.js"));
+});
 
 // ── 프롬프트 변주 (vLLM prefix 캐시 회피) ─────────────────────────────
 
