@@ -276,18 +276,20 @@ async function runOne(r, level, warmup) {
   const headers = { "content-type": "application/json" };
   if (c.apiKey) headers.authorization = `Bearer ${c.apiKey}`;
 
+  const payload = {
+    model: c.model,
+    messages: [{ role: "user", content: buildPrompt(r) }],
+    stream: true,
+    stream_options: { include_usage: true },
+  };
+  if (c.maxTokens !== null) payload.max_tokens = c.maxTokens;
+  if (c.temperature !== null) payload.temperature = c.temperature;
+
   try {
     const res = await request(url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model: c.model,
-        messages: [{ role: "user", content: buildPrompt(r) }],
-        max_tokens: c.maxTokens,
-        temperature: c.temperature,
-        stream: true,
-        stream_options: { include_usage: true },
-      }),
+      body: JSON.stringify(payload),
       dispatcher,
       signal: r.abort.signal,
       headersTimeout: 120_000,
@@ -636,8 +638,9 @@ function validateConfig(body) {
     model: String(model),
     prompt: String(prompt),
     apiKey: body.apiKey ? String(body.apiKey) : null,
-    maxTokens: intIn(body.maxTokens, 1024, 1, 128_000),
-    temperature: floatIn(body.temperature, 0.7, 0, 2),
+    // null = 요청 payload에서 생략 → vLLM 서버 기본값 적용
+    maxTokens: body.maxTokens == null || body.maxTokens === "" ? null : intIn(body.maxTokens, 1024, 1, 128_000),
+    temperature: body.temperature == null || body.temperature === "" ? null : floatIn(body.temperature, 0.7, 0, 2),
     varyPrompt: body.varyPrompt !== false,
     includeCodebase: body.includeCodebase === true,
     seedBase: Math.floor(Math.random() * 1_000_000),
