@@ -1,1130 +1,909 @@
 <!DOCTYPE html>
 <html lang="ko">
-
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LLM Bench - vLLM TPS 측정</title>
-  <style>
-    :root {
-      --bg: #0f172a;
-      --card: #1e293b;
-      --border: #334155;
-      --text: #e2e8f0;
-      --muted: #94a3b8;
-      --primary: #3b82f6;
-      --primary-hover: #2563eb;
-      --danger: #ef4444;
-      --danger-hover: #dc2626;
-      --success: #22c55e;
-      --warning: #f59e0b;
-    }
-
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
-
-    body {
-      font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      padding: 2rem;
-    }
-
-    .container {
-      max-width: 1200px;
-      margin: 0 auto;
-    }
-
-    h1 {
-      font-size: 1.8rem;
-      font-weight: 700;
-      margin-bottom: 0.3rem;
-    }
-
-    .subtitle {
-      color: var(--muted);
-      font-size: 0.9rem;
-      margin-bottom: 2rem;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.5rem;
-    }
-
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.5rem;
-    }
-
-    .card-title {
-      font-size: 0.85rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--muted);
-      margin-bottom: 1rem;
-    }
-
-    .form-group {
-      margin-bottom: 1rem;
-    }
-
-    label {
-      display: block;
-      font-size: 0.85rem;
-      color: var(--muted);
-      margin-bottom: 0.4rem;
-    }
-
-    input, textarea, select {
-      width: 100%;
-      padding: 0.6rem 0.8rem;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      font-size: 0.9rem;
-      font-family: inherit;
-      outline: none;
-      transition: border-color 0.2s;
-    }
-
-    input:focus, textarea:focus, select:focus {
-      border-color: var(--primary);
-    }
-
-    textarea {
-      resize: vertical;
-      min-height: 100px;
-    }
-
-    .row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 0.8rem;
-    }
-
-    .btn-group {
-      display: flex;
-      gap: 0.8rem;
-      margin-top: 1.5rem;
-    }
-
-    .btn {
-      padding: 0.7rem 2rem;
-      border: none;
-      border-radius: 8px;
-      font-size: 0.95rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s, opacity 0.2s;
-    }
-
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-primary {
-      background: var(--primary);
-      color: white;
-    }
-
-    .btn-primary:hover:not(:disabled) {
-      background: var(--primary-hover);
-    }
-
-    .btn-danger {
-      background: var(--danger);
-      color: white;
-    }
-
-    .btn-danger:hover:not(:disabled) {
-      background: var(--danger-hover);
-    }
-
-    .btn-secondary {
-      background: var(--border);
-      color: var(--text);
-    }
-
-    .btn-secondary:hover:not(:disabled) {
-      background: #475569;
-    }
-
-    /* Mode tabs */
-    .mode-tabs {
-      display: flex;
-      gap: 0;
-      margin-bottom: 1.5rem;
-      background: var(--bg);
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      overflow: hidden;
-    }
-
-    .mode-tab {
-      flex: 1;
-      padding: 0.7rem;
-      text-align: center;
-      font-size: 0.9rem;
-      font-weight: 600;
-      cursor: pointer;
-      border: none;
-      background: transparent;
-      color: var(--muted);
-      transition: all 0.2s;
-    }
-
-    .mode-tab.active {
-      background: var(--primary);
-      color: white;
-    }
-
-    .mode-tab:hover:not(.active) {
-      background: var(--border);
-    }
-
-    /* Stats panel */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 1rem;
-      margin-bottom: 1.5rem;
-    }
-
-    .stat-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.2rem;
-      text-align: center;
-    }
-
-    .stat-value {
-      font-size: 2rem;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .stat-label {
-      font-size: 0.8rem;
-      color: var(--muted);
-      margin-top: 0.3rem;
-    }
-
-    .stat-card.highlight .stat-value {
-      color: var(--primary);
-    }
-
-    .stat-card.success .stat-value {
-      color: var(--success);
-    }
-
-    .stat-card.warning .stat-value {
-      color: var(--warning);
-    }
-
-    /* Status indicator */
-    .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-size: 0.85rem;
-      margin-bottom: 0.5rem;
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--muted);
-    }
-
-    .status-dot.running {
-      background: var(--success);
-      animation: pulse 1.5s infinite;
-    }
-
-    @keyframes pulse {
-
-      0%,
-      100% {
-        opacity: 1;
-      }
-
-      50% {
-        opacity: 0.4;
-      }
-    }
-
-    /* Auto profile chart */
-    .chart-container {
-      margin-top: 1rem;
-      position: relative;
-      height: 250px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      overflow: hidden;
-    }
-
-    .chart-canvas {
-      width: 100%;
-      height: 100%;
-    }
-
-    /* Results table */
-    .full-width {
-      grid-column: 1 / -1;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.85rem;
-    }
-
-    th {
-      text-align: left;
-      padding: 0.6rem;
-      border-bottom: 2px solid var(--border);
-      color: var(--muted);
-      font-weight: 600;
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      position: sticky;
-      top: 0;
-      background: var(--card);
-      z-index: 1;
-    }
-
-    td {
-      padding: 0.5rem 0.6rem;
-      border-bottom: 1px solid var(--border);
-      font-variant-numeric: tabular-nums;
-    }
-
-    tr:hover td {
-      background: rgba(59, 130, 246, 0.05);
-    }
-
-    .table-wrap {
-      max-height: 400px;
-      overflow-y: auto;
-    }
-
-    .table-wrap::-webkit-scrollbar {
-      width: 6px;
-    }
-
-    .table-wrap::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 3px;
-    }
-
-    .error-msg {
-      color: var(--danger);
-      font-size: 0.85rem;
-      margin-top: 0.5rem;
-    }
-
-    /* Progress bar */
-    .progress-bar {
-      width: 100%;
-      height: 6px;
-      background: var(--border);
-      border-radius: 3px;
-      margin-bottom: 1rem;
-      overflow: hidden;
-    }
-
-    .progress-fill {
-      height: 100%;
-      background: var(--primary);
-      transition: width 0.3s;
-      border-radius: 3px;
-    }
-
-    .hidden {
-      display: none !important;
-    }
-
-    .stream-panel { max-height: 400px; overflow-y: auto; }
-    .stream-card { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.5rem; }
-    .stream-card:last-child { margin-bottom: 0; }
-    .stream-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; cursor: pointer; user-select: none; background: rgba(59,130,246,0.08); }
-    .stream-header:hover { background: rgba(59,130,246,0.15); }
-    .stream-card.done .stream-header { background: rgba(34,197,94,0.08); }
-    .stream-card.error .stream-header { background: rgba(239,68,68,0.08); }
-    .stream-id { font-weight: 600; font-size: 0.85rem; min-width: 2.5rem; }
-    .stream-status { font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 4px; }
-    .stream-status.running { background: var(--primary); color: #fff; animation: pulse 1.5s infinite; }
-    .stream-status.done { background: var(--success); color: #fff; }
-    .stream-status.error { background: var(--danger); color: #fff; }
-    .stream-stats { margin-left: auto; font-size: 0.75rem; color: var(--muted); }
-    .stream-body { display: none; padding: 0.5rem 0.75rem; font-size: 0.82rem; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; border-top: 1px solid var(--border); background: rgba(0,0,0,0.2); }
-    .stream-card.expanded .stream-body { display: block; }
-    .stream-toggle { font-size: 0.7rem; transition: transform 0.2s; }
-    .stream-card.expanded .stream-toggle { transform: rotate(90deg); }
-
-    .auto-info {
-      background: rgba(59, 130, 246, 0.1);
-      border: 1px solid rgba(59, 130, 246, 0.3);
-      border-radius: 8px;
-      padding: 0.8rem;
-      font-size: 0.85rem;
-      color: var(--primary);
-      margin-bottom: 1rem;
-    }
-
-    .checkbox-group {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin-top: 0.5rem;
-    }
-
-    .checkbox-group input[type="checkbox"] {
-      width: auto;
-      accent-color: var(--primary);
-    }
-
-    .checkbox-group label {
-      margin-bottom: 0;
-      font-size: 0.85rem;
-      color: var(--text);
-      cursor: pointer;
-    }
-
-    .optimal-badge {
-      display: inline-block;
-      background: var(--success);
-      color: #000;
-      font-size: 0.75rem;
-      font-weight: 700;
-      padding: 0.15rem 0.5rem;
-      border-radius: 4px;
-      margin-left: 0.5rem;
-    }
-
-    @media (max-width: 768px) {
-      body {
-        padding: 1rem;
-      }
-
-      .grid {
-        grid-template-columns: 1fr;
-      }
-
-      .stats-grid {
-        grid-template-columns: repeat(3, 1fr);
-      }
-
-      .row {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="data:," />
+<title>LLM Bench</title>
+<style>
+  :root {
+    --bg: #09090b;
+    --bg-raised: #101014;
+    --line: #1f1f26;
+    --line-strong: #2c2c35;
+    --text: #e4e4e7;
+    --text-dim: #8b8b96;
+    --text-faint: #55555e;
+    --accent: #34d399;
+    --accent-dim: rgba(52, 211, 153, 0.14);
+    --danger: #f87171;
+    --warn: #fbbf24;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100dvh;
+  }
+
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ── 상단 바 ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    height: 52px;
+    padding: 0 1.25rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .wordmark { font-weight: 700; letter-spacing: -0.02em; font-size: 15px; }
+  .wordmark span { color: var(--accent); }
+  .phase {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 12.5px;
+    color: var(--text-dim);
+  }
+  .phase-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--text-faint);
+  }
+  .phase-dot.running { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+  .phase-dot.error { background: var(--danger); }
+  @media (prefers-reduced-motion: no-preference) {
+    @keyframes pulse { 50% { opacity: 0.35; } }
+  }
+  .elapsed { margin-left: auto; font-size: 13px; color: var(--text-dim); }
+  .elapsed b { color: var(--text); font-weight: 600; }
+
+  /* ── 레이아웃 ── */
+  .shell {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    min-height: calc(100dvh - 52px);
+  }
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    aside { border-right: none !important; border-bottom: 1px solid var(--line); }
+  }
+
+  /* ── 사이드바 (설정) ── */
+  aside {
+    border-right: 1px solid var(--line);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.4rem;
+  }
+  .field-group { display: flex; flex-direction: column; gap: 0.9rem; }
+  .group-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-faint);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .field { display: flex; flex-direction: column; gap: 0.35rem; }
+  .field label { font-size: 12.5px; color: var(--text-dim); }
+  input[type="text"], input[type="password"], input[type="number"], textarea {
+    width: 100%;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    padding: 0.5rem 0.65rem;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input[type="number"] { font-family: var(--mono); }
+  input:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 72px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+
+  .seg {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .seg button {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 0.5rem;
+    cursor: pointer;
+  }
+  .seg button.on { background: var(--accent-dim); color: var(--accent); }
+
+  .check { display: flex; align-items: center; gap: 0.5rem; }
+  .check input { accent-color: var(--accent); width: 14px; height: 14px; }
+  .check label { font-size: 12.5px; color: var(--text-dim); cursor: pointer; }
+
+  .actions { display: flex; gap: 0.6rem; margin-top: 0.2rem; }
+  .btn {
+    flex: 1;
+    border: none;
+    border-radius: 6px;
+    font-size: 13.5px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 0.6rem 0;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.05s;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-start { background: var(--accent); color: #052e21; }
+  .btn-stop { background: var(--danger); color: #3d0a0a; }
+  .btn-reset { background: transparent; color: var(--text-dim); border: 1px solid var(--line-strong); flex: 0 0 auto; padding: 0.6rem 0.9rem; }
+  .form-error { color: var(--danger); font-size: 12.5px; min-height: 1.1em; }
+
+  /* ── 메인 ── */
+  main { padding: 1.25rem 1.5rem 3rem; min-width: 0; }
+  section + section { margin-top: 2rem; }
+  .sec-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-faint);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.8rem;
+  }
+
+  /* 지표 스트립: 카드 대신 hairline 분할 */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+  @media (max-width: 1100px) { .metrics { grid-template-columns: repeat(3, 1fr); } }
+  .metric { padding: 0.9rem 1rem 0.9rem 0; }
+  .metric + .metric { border-left: 1px solid var(--line); padding-left: 1rem; }
+  @media (max-width: 1100px) {
+    .metric:nth-child(4) { border-left: none; padding-left: 0; }
+    .metric:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+  }
+  .metric .v { font-family: var(--mono); font-size: 24px; font-weight: 600; letter-spacing: -0.01em; }
+  .metric .v em { font-style: normal; font-size: 13px; color: var(--text-faint); margin-left: 2px; }
+  .metric .k { font-size: 11.5px; color: var(--text-dim); margin-top: 0.15rem; }
+  .metric.hot .v { color: var(--accent); }
+  .metric.bad .v { color: var(--danger); }
+
+  /* 차트 */
+  .chart-box { position: relative; height: 180px; }
+  .chart-box.tall { height: 240px; }
+  canvas { width: 100%; height: 100%; display: block; }
+
+  /* 테이블 */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: right;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.45rem 0.7rem;
+    border-bottom: 1px solid var(--line-strong);
+    position: sticky; top: 0; background: var(--bg); z-index: 1;
+  }
+  th:first-child, td:first-child { text-align: left; padding-left: 0; }
+  td {
+    text-align: right;
+    padding: 0.4rem 0.7rem;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+  td.t { font-family: inherit; }
+  tr.optimal td { background: var(--accent-dim); }
+  .badge {
+    display: inline-block;
+    font-family: inherit;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: #052e21;
+    background: var(--accent);
+    border-radius: 4px;
+    padding: 0.05rem 0.35rem;
+    margin-left: 0.4rem;
+    vertical-align: 1px;
+  }
+  .table-wrap { max-height: 360px; overflow-y: auto; }
+  .table-wrap::-webkit-scrollbar { width: 6px; }
+  .table-wrap::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+
+  .auto-status { font-size: 13px; color: var(--text-dim); margin-bottom: 0.8rem; }
+  .auto-status b { color: var(--accent); font-family: var(--mono); }
+
+  /* 스트림 뷰어 */
+  .streams { display: flex; flex-direction: column; gap: 0.4rem; max-height: 420px; overflow-y: auto; }
+  .stream {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .stream-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.7rem;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12.5px;
+  }
+  .stream-head:hover { background: var(--bg-raised); }
+  .stream-head .arrow { color: var(--text-faint); font-size: 10px; transition: transform 0.15s; }
+  .stream.open .arrow { transform: rotate(90deg); }
+  .stream-head .rid { font-family: var(--mono); color: var(--text-dim); min-width: 3.2rem; }
+  .stream-head .st { font-size: 11px; font-weight: 600; }
+  .stream-head .st.run { color: var(--warn); }
+  .stream-head .st.ok { color: var(--accent); }
+  .stream-head .st.err { color: var(--danger); }
+  .stream-head .meta { margin-left: auto; font-family: var(--mono); font-size: 11.5px; color: var(--text-dim); }
+  .stream-body {
+    display: none;
+    border-top: 1px solid var(--line);
+    background: var(--bg-raised);
+    padding: 0.6rem 0.8rem;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .stream.open .stream-body { display: block; }
+
+  .empty { color: var(--text-faint); font-size: 13px; padding: 1.2rem 0; }
+  .hidden { display: none !important; }
+</style>
 </head>
-
 <body>
-  <div class="container">
-    <h1>LLM Bench</h1>
-    <p class="subtitle">vLLM 모델 동시 접속 TPS 성능 측정 도구</p>
 
-    <!-- Mode tabs -->
-    <div class="mode-tabs">
-      <button class="mode-tab active" id="tabManual" onclick="setMode('manual')">수동 모드</button>
-      <button class="mode-tab" id="tabAuto" onclick="setMode('auto')">자동 최적화 모드</button>
-    </div>
+<header>
+  <div class="wordmark">LLM<span>_</span>BENCH</div>
+  <div class="phase"><span class="phase-dot" id="phaseDot"></span><span id="phaseText">대기</span></div>
+  <div class="elapsed">경과 <b class="num" id="elapsed">0.0s</b></div>
+</header>
 
-    <!-- Stats -->
-    <div class="stats-grid" id="statsGrid">
-      <div class="stat-card highlight">
-        <div class="stat-value" id="statAvgTps">0</div>
-        <div class="stat-label">평균 TPS (Token/Sec)</div>
+<div class="shell">
+  <aside>
+    <div class="field-group">
+      <div class="group-label">연결</div>
+      <div class="field">
+        <label>OpenAI 호환 URL</label>
+        <input type="text" id="baseUrl" value="http://localhost:8000/v1" placeholder="http://localhost:8000/v1" />
       </div>
-      <div class="stat-card success">
-        <div class="stat-value" id="statTotalTokens">0</div>
-        <div class="stat-label">총 Output Tokens</div>
+      <div class="field">
+        <label>API Key (선택)</label>
+        <input type="password" id="apiKey" placeholder="없으면 비워두세요" />
       </div>
-      <div class="stat-card warning">
-        <div class="stat-value" id="statLatency">0</div>
-        <div class="stat-label">평균 Latency (s)</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statCompleted">0</div>
-        <div class="stat-label">완료 요청</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-value" id="statElapsed">0s</div>
-        <div class="stat-label">경과 시간</div>
+      <div class="field">
+        <label>모델</label>
+        <input type="text" id="model" placeholder="Qwen/Qwen2.5-7B-Instruct" />
       </div>
     </div>
 
-    <!-- Settings -->
-    <div class="grid">
-      <div class="card">
-        <div class="card-title">연결 설정</div>
-        <div class="form-group">
-          <label>vLLM OpenAI Compatible URL</label>
-          <input type="text" id="baseUrl" placeholder="http://localhost:8000/v1"
-            value="http://localhost:8000/v1" />
-        </div>
-        <div class="form-group">
-          <label>API Key (선택)</label>
-          <input type="password" id="apiKey" placeholder="비밀번호 없이 접속 시 비워두세요" />
-        </div>
-        <div class="form-group">
-          <label>Model Name</label>
-          <input type="text" id="model" placeholder="Qwen/Qwen2.5-7B-Instruct" />
-        </div>
+    <div class="field-group">
+      <div class="group-label">부하</div>
+      <div class="seg">
+        <button id="segManual" class="on" onclick="setMode('manual')">수동</button>
+        <button id="segAuto" onclick="setMode('auto')">자동 탐색</button>
       </div>
 
-      <div class="card">
-        <!-- Manual mode settings -->
-        <div id="manualSettings">
-          <div class="card-title">테스트 설정 (수동)</div>
-          <div class="form-group">
-            <label>Prompt</label>
-            <textarea id="prompt"
-              placeholder="프롬프트를 입력하세요">안녕하세요, 오늘은 날씨가 좋네요. 인공지능의 미래에 대해 thoughts를 공유해주세요.</textarea>
-          </div>
-          <div class="row">
-            <div class="form-group">
-              <label>동시 접속 수</label>
-              <input type="number" id="concurrent" value="4" min="1" max="100" />
-            </div>
-            <div class="form-group">
-              <label>반복 라운드</label>
-              <input type="number" id="rounds" value="3" min="1" max="100" />
-            </div>
-          </div>
-          <div class="row">
-            <div class="form-group">
-              <label>Max Tokens</label>
-              <input type="number" id="maxTokens" value="1024" min="1" />
-            </div>
-            <div class="form-group">
-              <label>Temperature</label>
-              <input type="number" id="temperature" value="0.7" min="0" max="2" step="0.1" />
-            </div>
-          </div>
-          <div class="checkbox-group">
-            <input type="checkbox" id="varyPrompt" checked />
-            <label for="varyPrompt">프롬프트 변주 (vLLM 캐시 회피)</label>
-          </div>
-          <div class="checkbox-group">
-            <input type="checkbox" id="includeCodebase" />
-            <label for="includeCodebase">대규모 코드베이스 포함 (실사용 모의)</label>
-          </div>
-        </div>
+      <div class="field">
+        <label>프롬프트</label>
+        <textarea id="prompt">인공지능의 미래에 대해 자유롭게 서술해주세요.</textarea>
+      </div>
 
-        <!-- Auto mode settings -->
-        <div id="autoSettings" class="hidden">
-          <div class="card-title">자동 최적화 설정</div>
-          <div class="auto-info">
-            동시 접속 수를 단계별로 증가시키며 최대 TPS를 달성하는 최적값을 찾습니다.
-            TPS가 정상의 90% 미만으로 떨어지면 검색을 종료합니다.
+      <div id="manualFields">
+        <div class="pair">
+          <div class="field">
+            <label>동시성</label>
+            <input type="number" id="concurrency" value="4" min="1" max="512" />
           </div>
-          <div class="form-group">
-            <label>Prompt</label>
-            <textarea id="autoPrompt"
-              placeholder="프롬프트를 입력하세요">안녕하세요, 오늘은 날씨가 좋네요. 인공지능의 미래에 대해 thoughts를 공유해주세요.</textarea>
-          </div>
-          <div class="row">
-            <div class="form-group">
-              <label>최대 동시 접속 수</label>
-              <input type="number" id="autoMaxConcurrent" value="64" min="4" max="500" />
-            </div>
-            <div class="form-group">
-              <label>단계별 측정 횟수</label>
-              <input type="number" id="autoPerRound" value="3" min="1" max="10" />
-            </div>
-          </div>
-          <div class="row">
-            <div class="form-group">
-              <label>웜업 횟수 (동시접속=1)</label>
-              <input type="number" id="autoWarmup" value="2" min="0" max="5" />
-            </div>
-            <div class="form-group">
-              <label>Max Tokens</label>
-              <input type="number" id="autoMaxTokens" value="1024" min="1" />
-            </div>
-          </div>
-          <div class="form-group">
-            <label>Temperature</label>
-            <input type="number" id="autoTemperature" value="0.7" min="0" max="2" step="0.1" />
-          </div>
-          <div class="checkbox-group">
-            <input type="checkbox" id="autoVaryPrompt" checked />
-            <label for="autoVaryPrompt">프롬프트 변주 (vLLM 캐시 회피)</label>
-          </div>
-          <div class="checkbox-group">
-            <input type="checkbox" id="autoIncludeCodebase" />
-            <label for="autoIncludeCodebase">대규모 코드베이스 포함 (실사용 모의)</label>
+          <div class="field">
+            <label>총 요청 수</label>
+            <input type="number" id="totalRequests" value="12" min="1" />
           </div>
         </div>
       </div>
 
-      <!-- Action buttons -->
-      <div class="card full-width">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
-          <div style="display:flex; align-items:center; gap:1rem;">
-            <div class="status">
-              <span class="status-dot" id="statusDot"></span>
-              <span id="statusText">대기 중</span>
-            </div>
-            <div id="autoPhase" class="hidden" style="font-size:0.85rem; color:var(--warning);"></div>
+      <div id="autoFields" class="hidden">
+        <div class="pair">
+          <div class="field">
+            <label>최대 동시성</label>
+            <input type="number" id="maxConcurrency" value="64" min="1" max="512" />
+          </div>
+          <div class="field">
+            <label>단계당 반복 (x동시성)</label>
+            <input type="number" id="requestsPerLevel" value="3" min="1" max="20" />
           </div>
         </div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="progressFill" style="width: 0%"></div>
-        </div>
-        <div class="btn-group">
-          <button class="btn btn-primary" id="btnStart" onclick="startBenchmark()">측정 시작</button>
-          <button class="btn btn-danger" id="btnStop" onclick="stopBenchmark()" disabled>중지</button>
-          <button class="btn btn-secondary" id="btnReset" onclick="resetBenchmark()">초기화</button>
-        </div>
-        <div class="error-msg" id="errorMsg"></div>
       </div>
 
-      <!-- Auto mode profile chart -->
-      <div class="card full-width hidden" id="profileCard">
-        <div class="card-title">자동 최적화 프로파일</div>
-        <div id="profileSummary" style="margin-bottom:0.8rem;"></div>
-        <div class="chart-container">
-          <canvas id="profileChart" class="chart-canvas"></canvas>
+      <div class="pair">
+        <div class="field">
+          <label>웜업 요청</label>
+          <input type="number" id="warmupRequests" value="2" min="0" max="20" />
         </div>
-        <table style="margin-top:1rem;">
+        <div class="field">
+          <label>Max Tokens</label>
+          <input type="number" id="maxTokens" value="1024" min="1" />
+        </div>
+      </div>
+      <div class="field">
+        <label>Temperature</label>
+        <input type="number" id="temperature" value="0.7" min="0" max="2" step="0.1" />
+      </div>
+      <div class="check">
+        <input type="checkbox" id="varyPrompt" checked />
+        <label for="varyPrompt">프롬프트 변주 (캐시 회피)</label>
+      </div>
+      <div class="check">
+        <input type="checkbox" id="includeCodebase" />
+        <label for="includeCodebase">대규모 코드베이스 포함 (긴 입력 모의)</label>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-start" id="btnStart" onclick="startBench()">시작</button>
+      <button class="btn btn-stop" id="btnStop" onclick="stopBench()" disabled>중지</button>
+      <button class="btn btn-reset" onclick="resetBench()">초기화</button>
+    </div>
+    <div class="form-error" id="formError"></div>
+  </aside>
+
+  <main>
+    <section>
+      <div class="metrics">
+        <div class="metric hot">
+          <div class="v"><span id="mThroughput">0</span><em>tok/s</em></div>
+          <div class="k">시스템 처리량 (구간)</div>
+        </div>
+        <div class="metric">
+          <div class="v"><span id="mLive">0</span><em>tok/s</em></div>
+          <div class="k">실시간 처리량 (5s)</div>
+        </div>
+        <div class="metric">
+          <div class="v"><span id="mDecode">0</span><em>tok/s</em></div>
+          <div class="k">Decode p50 (요청당)</div>
+        </div>
+        <div class="metric">
+          <div class="v"><span id="mTtft">0</span><em>s</em></div>
+          <div class="k">TTFT p50</div>
+        </div>
+        <div class="metric">
+          <div class="v"><span id="mLatency">0</span><em>s</em></div>
+          <div class="k">Latency p50 / <span class="num" id="mLatencyP95">0</span> p95</div>
+        </div>
+        <div class="metric" id="mReqBox">
+          <div class="v"><span id="mDone">0</span><em id="mFailWrap"> / <span id="mFail">0</span> 실패</em></div>
+          <div class="k">완료 요청 <span id="mActive"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="sec-title">처리량 타임라인</div>
+      <div class="chart-box"><canvas id="timelineChart"></canvas></div>
+    </section>
+
+    <section id="autoSection" class="hidden">
+      <div class="sec-title">동시성 프로파일</div>
+      <div class="auto-status" id="autoStatus"></div>
+      <div class="chart-box tall"><canvas id="profileChart"></canvas></div>
+      <div class="table-wrap" style="margin-top:1rem;">
+        <table>
           <thead>
             <tr>
-              <th>동시 접속 수</th>
-              <th>평균 TPS (개요)</th>
-              <th>전체 TPS (총괄)</th>
-              <th>평균 Latency (s)</th>
-              <th>성공</th>
-              <th>실패</th>
+              <th>동시성</th><th>처리량 tok/s</th><th>Decode tok/s</th>
+              <th>Latency p50</th><th>p95</th><th>TTFT p50</th><th>성공</th><th>실패</th>
             </tr>
           </thead>
-          <tbody id="profileBody">
-          </tbody>
+          <tbody id="profileBody"></tbody>
         </table>
       </div>
+    </section>
 
-      <!-- Stream responses -->
-      <div class="card full-width hidden" id="streamCard">
-        <div class="card-title">실시간 응답</div>
-        <div class="stream-panel" id="streamPanel"></div>
+    <section id="summarySection" class="hidden">
+      <div class="sec-title">분포 요약</div>
+      <table>
+        <thead>
+          <tr><th>지표</th><th>평균</th><th>p50</th><th>p95</th><th>p99</th></tr>
+        </thead>
+        <tbody id="summaryBody"></tbody>
+      </table>
+    </section>
+
+    <section id="streamSection" class="hidden">
+      <div class="sec-title">실시간 응답</div>
+      <div class="streams" id="streams"></div>
+    </section>
+
+    <section>
+      <div class="sec-title">요청 기록</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>동시성</th><th>TTFT s</th><th>Latency s</th>
+              <th>입력 tok</th><th>출력 tok</th><th>Decode tok/s</th><th>상태</th>
+            </tr>
+          </thead>
+          <tbody id="requestsBody"></tbody>
+        </table>
+        <div class="empty" id="requestsEmpty">아직 결과가 없습니다. 좌측에서 벤치마크를 시작하세요.</div>
       </div>
+    </section>
+  </main>
+</div>
 
-      <!-- Results table -->
-      <div class="card full-width">
-        <div class="card-title">결과</div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Latency (s)</th>
-                <th>Input Tokens</th>
-                <th>Output Tokens</th>
-                <th>Total Tokens</th>
-                <th>TPS</th>
-              </tr>
-            </thead>
-            <tbody id="resultsBody">
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
+<script>
+"use strict";
 
-  <script>
-    let currentMode = 'manual';
-    let pollTimer = null;
-    let elapsedTimer = null;
-    let elapsedStart = 0;
-    let wasMeasuring = false;
+// ── 상태 ─────────────────────────────────────────────────────────
+let mode = "manual";
+let running = false;
+let elapsedTimer = null;
+let elapsedStart = 0;
+let lastState = null;
+const streamCards = new Map(); // id -> { el, body, meta, st, text }
 
-    function setMode(mode) {
-      currentMode = mode;
-      document.getElementById('tabManual').classList.toggle('active', mode === 'manual');
-      document.getElementById('tabAuto').classList.toggle('active', mode === 'auto');
-      document.getElementById('manualSettings').classList.toggle('hidden', mode === 'auto');
-      document.getElementById('autoSettings').classList.toggle('hidden', mode === 'manual');
+const $ = (id) => document.getElementById(id);
+const fmt = (v, d = 1) => (v == null ? "0" : Number(v).toFixed(d));
+
+// ── 모드 전환 ─────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m;
+  $("segManual").classList.toggle("on", m === "manual");
+  $("segAuto").classList.toggle("on", m === "auto");
+  $("manualFields").classList.toggle("hidden", m === "auto");
+  $("autoFields").classList.toggle("hidden", m === "manual");
+}
+
+// ── 벤치 제어 ─────────────────────────────────────────────────────
+async function startBench() {
+  const body = {
+    mode,
+    baseUrl: $("baseUrl").value.trim(),
+    model: $("model").value.trim(),
+    prompt: $("prompt").value.trim(),
+    apiKey: $("apiKey").value || undefined,
+    maxTokens: +$("maxTokens").value || 1024,
+    temperature: +$("temperature").value,
+    warmupRequests: +$("warmupRequests").value,
+    varyPrompt: $("varyPrompt").checked,
+    includeCodebase: $("includeCodebase").checked,
+  };
+  if (!body.baseUrl || !body.model || !body.prompt) {
+    $("formError").textContent = "URL, 모델, 프롬프트를 입력하세요.";
+    return;
+  }
+  if (mode === "manual") {
+    body.concurrency = +$("concurrency").value || 4;
+    body.totalRequests = +$("totalRequests").value || body.concurrency * 3;
+  } else {
+    body.maxConcurrency = +$("maxConcurrency").value || 64;
+    body.requestsPerLevel = +$("requestsPerLevel").value || 3;
+  }
+
+  $("formError").textContent = "";
+  clearStreams();
+  try {
+    const res = await fetch("/api/bench/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      $("formError").textContent = data.error || "시작 실패";
+      return;
     }
+  } catch (err) {
+    $("formError").textContent = "서버 연결 실패: " + err.message;
+    return;
+  }
+  setRunning(true);
+  elapsedStart = Date.now();
+}
 
-    async function startBenchmark() {
-      const isAuto = currentMode === 'auto';
+async function stopBench() {
+  await fetch("/api/bench/stop", { method: "POST" }).catch(() => {});
+}
 
-      const baseUrl = document.getElementById('baseUrl').value.trim();
-      const model = document.getElementById('model').value.trim();
-      const prompt = isAuto
-        ? document.getElementById('autoPrompt').value.trim()
-        : document.getElementById('prompt').value.trim();
-      const apiKey = document.getElementById('apiKey').value;
+async function resetBench() {
+  await fetch("/api/bench/reset", { method: "POST" }).catch(() => {});
+  clearStreams();
+  renderState({ phase: "idle" });
+}
 
-      if (!baseUrl || !model || !prompt) {
-        showError('URL, Model, Prompt를 모두 입력해주세요.');
-        return;
-      }
+function setRunning(on) {
+  running = on;
+  $("btnStart").disabled = on;
+  $("btnStop").disabled = !on;
+  if (on && !elapsedTimer) {
+    elapsedTimer = setInterval(() => {
+      $("elapsed").textContent = ((Date.now() - elapsedStart) / 1000).toFixed(1) + "s";
+    }, 100);
+  }
+  if (!on && elapsedTimer) {
+    clearInterval(elapsedTimer);
+    elapsedTimer = null;
+  }
+}
 
-      clearError();
-      document.getElementById('btnStart').disabled = true;
-      document.getElementById('btnStop').disabled = false;
-      setRunning(true);
+// ── SSE ───────────────────────────────────────────────────────────
+let es = null;
 
-      const body = {
-        baseUrl,
-        model,
-        prompt,
-        apiKey,
-        mode: currentMode,
-      };
+function connectSSE() {
+  es = new EventSource("/api/bench/stream");
 
-      if (isAuto) {
-        body.maxTokens = parseInt(document.getElementById('autoMaxTokens').value) || 1024;
-        body.temperature = parseFloat(document.getElementById('autoTemperature').value) || 0.7;
-        body.autoMaxConcurrent = parseInt(document.getElementById('autoMaxConcurrent').value) || 64;
-        body.autoPerRound = parseInt(document.getElementById('autoPerRound').value) || 3;
-        body.autoWarmup = parseInt(document.getElementById('autoWarmup').value) || 2;
-        body.varyPrompt = document.getElementById('autoVaryPrompt').checked;
-        body.includeCodebase = document.getElementById('autoIncludeCodebase').checked;
-      } else {
-        body.concurrent = parseInt(document.getElementById('concurrent').value) || 1;
-        body.rounds = parseInt(document.getElementById('rounds').value) || 1;
-        body.maxTokens = parseInt(document.getElementById('maxTokens').value) || 1024;
-        body.temperature = parseFloat(document.getElementById('temperature').value) || 0.7;
-        body.varyPrompt = document.getElementById('varyPrompt').checked;
-        body.includeCodebase = document.getElementById('includeCodebase').checked;
-      }
+  es.addEventListener("state", (e) => renderState(JSON.parse(e.data)));
 
-      const res = await fetch('/api/measure', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+  es.addEventListener("request-start", (e) => {
+    const d = JSON.parse(e.data);
+    if (d.warmup) return;
+    addStream(d.id, d.level);
+  });
 
-      const data = await res.json();
-      if (!res.ok) {
-        showError(data.error || '요청 실패');
-        setRunning(false);
-        document.getElementById('btnStart').disabled = false;
-        document.getElementById('btnStop').disabled = true;
-        return;
-      }
-
-      elapsedStart = Date.now();
-      updateElapsed();
-      elapsedTimer = setInterval(updateElapsed, 100);
-      pollTimer = setInterval(pollStatus, 500);
-      wasMeasuring = true;
+  es.addEventListener("tokens", (e) => {
+    const d = JSON.parse(e.data);
+    const card = streamCards.get(d.id);
+    if (card) {
+      card.text += d.text;
+      card.body.textContent = card.text;
     }
+  });
 
-    async function pollStatus() {
-      const res = await fetch('/api/status');
-      const data = await res.json();
+  es.addEventListener("request-end", (e) => {
+    const d = JSON.parse(e.data);
+    const card = streamCards.get(d.id);
+    if (!card) return;
+    card.st.textContent = "완료";
+    card.st.className = "st ok";
+    card.meta.textContent = `${d.outputTokens} tok | ttft ${fmt(d.ttft, 2)}s | ${fmt(d.decodeTPS)} tok/s`;
+    card.el.classList.remove("open");
+  });
 
-      // 측정 종료 감지 (수동 모드: measuring이 false로 바뀌면 종료)
-      if (wasMeasuring && !data.measuring && !data.autoState) {
-        wasMeasuring = false;
-        stopPolling();
-        setRunning(false);
-        document.getElementById('btnStart').disabled = false;
-        document.getElementById('btnStop').disabled = true;
-        document.getElementById('progressFill').style.width = '100%';
-      }
+  es.addEventListener("request-error", (e) => {
+    const d = JSON.parse(e.data);
+    const card = streamCards.get(d.id);
+    if (!card) return;
+    card.st.textContent = "실패";
+    card.st.className = "st err";
+    card.body.textContent = d.error;
+  });
 
-      document.getElementById('statAvgTps').textContent = data.avgTPS.toFixed(1);
-      document.getElementById('statTotalTokens').textContent = data.totalTokens.toLocaleString();
-      document.getElementById('statCompleted').textContent = data.completed;
+  es.addEventListener("done", () => setRunning(false));
 
-      // Auto state
-      if (data.autoState) {
-        const as = data.autoState;
-        const phaseEl = document.getElementById('autoPhase');
-        phaseEl.classList.remove('hidden');
+  es.onerror = () => {
+    es.close();
+    setTimeout(connectSSE, 2000); // 자동 재연결
+  };
+}
 
-        if (as.done) {
-          document.getElementById('autoPhase').innerHTML =
-            `완료! 최적 동시 접속 수: <strong>${as.optimalConcurrent}</strong> (최대 TPS: ${as.optimalTPS})`;
-          stopPolling();
-          setRunning(false);
-          document.getElementById('btnStart').disabled = false;
-          document.getElementById('btnStop').disabled = true;
-          document.getElementById('progressFill').style.width = '100%';
-        } else {
-          document.getElementById('autoPhase').textContent =
-            `${as.phase === 'warmup' ? '웜업' : '측정'} — 현재 동시 접속: ${as.currentConcurrent} | 정상 TPS: ${Math.round(as.peakTotalTPS)}`;
-        }
+// ── 스트림 카드 ───────────────────────────────────────────────────
+function addStream(id, level) {
+  $("streamSection").classList.remove("hidden");
+  const el = document.createElement("div");
+  el.className = "stream open";
+  el.dataset.id = id;
+  const head = document.createElement("div");
+  head.className = "stream-head";
+  head.innerHTML = `<span class="arrow">&#9654;</span><span class="rid">#${id}</span><span class="st run">진행</span><span class="meta">동시성 ${level}</span>`;
+  head.onclick = () => el.classList.toggle("open");
+  const body = document.createElement("div");
+  body.className = "stream-body";
+  el.append(head, body);
+  const panel = $("streams");
+  panel.prepend(el);
+  while (panel.children.length > 60) { // DOM/메모리 폭주 방지: Map 항목도 함께 제거
+    streamCards.delete(+panel.lastChild.dataset.id);
+    panel.lastChild.remove();
+  }
+  streamCards.set(id, { el, body, st: head.querySelector(".st"), meta: head.querySelector(".meta"), text: "" });
+}
 
-        // Progress chart
-        if (as.profile && as.profile.length > 0) {
-          showProfile(as.profile, as.optimalConcurrent);
-        }
-      }
+function clearStreams() {
+  streamCards.clear();
+  $("streams").innerHTML = "";
+  $("streamSection").classList.add("hidden");
+}
 
-      // Fetch detailed results
-      const res2 = await fetch('/api/results');
-      const data2 = await res2.json();
+// ── 렌더 ─────────────────────────────────────────────────────────
+function renderState(s) {
+  lastState = s;
 
-      document.getElementById('statLatency').textContent = data2.summary.avgLatency.toFixed(2);
+  const dot = $("phaseDot");
+  const phaseNames = { idle: "대기", running: "측정 중", done: "완료", stopped: "중지됨", error: "오류" };
+  $("phaseText").textContent = phaseNames[s.phase] || s.phase;
+  dot.className = "phase-dot" + (s.phase === "running" ? " running" : s.phase === "error" ? " error" : "");
 
-      const tbody = document.getElementById('resultsBody');
-      tbody.innerHTML = data2.results.map(r => `
-        <tr>
-          <td>${r.index + 1}</td>
-          <td>${r.latency}</td>
-          <td>${r.inputTokens.toLocaleString()}</td>
-          <td>${r.outputTokens.toLocaleString()}</td>
-          <td>${r.totalTokens.toLocaleString()}</td>
-          <td>${r.tps}</td>
-        </tr>
-      `).join('');
+  if (s.phase === "idle") {
+    setRunning(false);
+    $("elapsed").textContent = "0.0s";
+    ["mThroughput", "mLive", "mDecode", "mTtft", "mLatency", "mLatencyP95", "mDone", "mFail"].forEach((id) => ($(id).textContent = "0"));
+    $("mActive").textContent = "";
+    $("autoSection").classList.add("hidden");
+    $("summarySection").classList.add("hidden");
+    $("requestsBody").innerHTML = "";
+    $("requestsEmpty").classList.remove("hidden");
+    drawTimeline([]);
+    return;
+  }
+
+  if (s.phase === "running" && !running) {
+    setRunning(true);
+    elapsedStart = Date.now() - s.elapsed * 1000;
+  }
+  if (s.phase !== "running") {
+    setRunning(false);
+    $("elapsed").textContent = fmt(s.elapsed) + "s";
+  }
+  if (s.error) $("formError").textContent = s.error;
+
+  // 지표
+  const sum = s.summary;
+  $("mThroughput").textContent = sum ? fmt(sum.throughput, 0) : "0";
+  $("mLive").textContent = fmt(s.liveTPS, 0);
+  $("mDecode").textContent = sum ? fmt(sum.decodeTPS.p50) : "0";
+  $("mTtft").textContent = sum ? fmt(sum.ttft.p50, 2) : "0";
+  $("mLatency").textContent = sum ? fmt(sum.latency.p50) : "0";
+  $("mLatencyP95").textContent = sum ? fmt(sum.latency.p95) : "0";
+  $("mDone").textContent = s.completed;
+  $("mFail").textContent = s.failed;
+  $("mReqBox").classList.toggle("bad", s.failed > 0);
+  $("mActive").textContent = s.active > 0 ? `(진행 ${s.active})` : "";
+
+  drawTimeline(s.buckets || []);
+
+  // 분포 요약
+  if (sum) {
+    $("summarySection").classList.remove("hidden");
+    const row = (name, d, dec) =>
+      `<tr><td class="t">${name}</td><td>${fmt(d.avg, dec)}</td><td>${fmt(d.p50, dec)}</td><td>${fmt(d.p95, dec)}</td><td>${fmt(d.p99, dec)}</td></tr>`;
+    $("summaryBody").innerHTML =
+      row("Latency (s)", sum.latency, 2) +
+      row("TTFT (s)", sum.ttft, 2) +
+      row("Decode (tok/s)", sum.decodeTPS, 1);
+  } else {
+    $("summarySection").classList.add("hidden"); // 이전 런 요약 잔존 방지
+  }
+
+  // 자동 모드
+  if (s.auto) {
+    $("autoSection").classList.remove("hidden");
+    const a = s.auto;
+    const stName = { warmup: "웜업", probing: "탐색", refining: "정제", done: "완료" }[a.status] || a.status;
+    let msg;
+    if (a.status === "done" && a.optimal) {
+      msg = `완료. 최적 동시성 <b>${a.optimal.concurrency}</b>, 처리량 <b>${fmt(a.optimal.throughput, 0)} tok/s</b>`;
+    } else {
+      msg = `${stName} 중, 현재 동시성 <b>${a.currentLevel}</b>` +
+        (a.peak ? `, 현재 peak <b>${fmt(a.peak.throughput, 0)} tok/s</b> @ ${a.peak.concurrency}` : "");
     }
+    $("autoStatus").innerHTML = msg;
 
-    async function stopBenchmark() {
-      await fetch('/api/stop', { method: 'POST' });
-      stopPolling();
-      setRunning(false);
-      document.getElementById('btnStart').disabled = false;
-      document.getElementById('btnStop').disabled = true;
-    }
-
-    async function resetBenchmark() {
-      await fetch('/api/reset');
-      stopPolling();
-      setRunning(false);
-      document.getElementById('btnStart').disabled = false;
-      document.getElementById('btnStop').disabled = true;
-      document.getElementById('profileCard').classList.add('hidden');
-      document.getElementById('autoPhase').classList.add('hidden');
-      ['statAvgTps', 'statTotalTokens', 'statLatency'].forEach(id => {
-        document.getElementById(id).textContent = '0';
-      });
-      document.getElementById('statCompleted').textContent = '0';
-      document.getElementById('statElapsed').textContent = '0s';
-      document.getElementById('progressFill').style.width = '0%';
-      document.getElementById('resultsBody').innerHTML = '';
-      clearError();
-    }
-
-    function stopPolling() {
-      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
-    }
-
-    function setRunning(running) {
-      const dot = document.getElementById('statusDot');
-      const text = document.getElementById('statusText');
-      if (running) {
-        dot.classList.add('running');
-        text.textContent = '측정 중';
-      } else {
-        dot.classList.remove('running');
-        text.textContent = '대기 중';
-      }
-    }
-
-    function updateElapsed() {
-      const s = ((Date.now() - elapsedStart) / 1000).toFixed(1);
-      document.getElementById('statElapsed').textContent = s + 's';
-    }
-
-    function showError(msg) {
-      document.getElementById('errorMsg').textContent = msg;
-    }
-
-    function clearError() {
-      document.getElementById('errorMsg').textContent = '';
-    }
-
-    // ── Profile chart (canvas) ─────────────────────────────────
-
-    function showProfile(profile, optimal) {
-      const card = document.getElementById('profileCard');
-      card.classList.remove('hidden');
-
-      // Summary
-      const peak = profile.reduce((a, b) => a.totalTPS > b.totalTPS ? a : b);
-      document.getElementById('profileSummary').innerHTML =
-        `최적 동시 접속 수: <strong style="color:var(--success);">${optimal || peak.concurrent}</strong> ` +
-        `(최대 전체 TPS: <strong style="color:var(--primary);">${peak.totalTPS}</strong>)`;
-
-      // Table
-      document.getElementById('profileBody').innerHTML = profile.map(p => `
-        <tr style="${p.concurrent === (optimal || peak.concurrent) ? 'background:rgba(34,197,94,0.1);' : ''}">
-          <td>${p.concurrent} ${p.concurrent === (optimal || peak.concurrent) ? '<span class="optimal-badge">최적</span>' : ''}</td>
-          <td>${p.avgTPS}</td>
-          <td><strong>${p.totalTPS}</strong></td>
-          <td>${p.avgLatency}</td>
+    if (a.profile.length) {
+      const opt = a.optimal ? a.optimal.concurrency : (a.peak ? a.peak.concurrency : null);
+      $("profileBody").innerHTML = a.profile.map((p) => `
+        <tr class="${p.concurrency === opt ? "optimal" : ""}">
+          <td>${p.concurrency}${p.concurrency === opt ? '<span class="badge">최적</span>' : ""}</td>
+          <td>${fmt(p.throughput, 0)}</td>
+          <td>${fmt(p.avgDecodeTPS)}</td>
+          <td>${fmt(p.p50Latency, 2)}</td>
+          <td>${fmt(p.p95Latency, 2)}</td>
+          <td>${fmt(p.p50TTFT, 2)}</td>
           <td>${p.success}</td>
           <td>${p.failed}</td>
-        </tr>
-      `).join('');
-
-      // Canvas chart
-      drawProfileChart(profile, optimal || peak.concurrent);
+        </tr>`).join("");
+      drawProfile(a.profile, opt);
+    } else {
+      $("profileBody").innerHTML = ""; // 이전 런 프로파일 잔존 방지
+      drawProfile([], null);
     }
+  } else {
+    $("autoSection").classList.add("hidden");
+  }
 
-    function drawProfileChart(profile, optimal) {
-      const canvas = document.getElementById('profileChart');
-      const container = canvas.parentElement;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = container.clientWidth * dpr;
-      canvas.height = container.clientHeight * dpr;
-      const ctx = canvas.getContext('2d');
-      ctx.scale(dpr, dpr);
-      const W = container.clientWidth;
-      const H = container.clientHeight;
+  // 요청 테이블
+  const reqs = s.requests || [];
+  $("requestsEmpty").classList.toggle("hidden", reqs.length > 0);
+  const stLabel = { ok: "완료", error: "실패", running: "진행", aborted: "중단" };
+  $("requestsBody").innerHTML = reqs.slice().reverse().map((r) => `
+    <tr>
+      <td>${r.id}</td>
+      <td>${r.level}</td>
+      <td>${r.ttft != null ? fmt(r.ttft, 2) : "-"}</td>
+      <td>${r.latency != null ? fmt(r.latency, 2) : "-"}</td>
+      <td>${r.inputTokens || "-"}</td>
+      <td>${r.outputTokens || "-"}</td>
+      <td>${r.decodeTPS != null ? fmt(r.decodeTPS) : "-"}</td>
+      <td class="t" style="color:${r.status === "ok" ? "var(--accent)" : r.status === "error" ? "var(--danger)" : "var(--text-dim)"}">${stLabel[r.status] || r.status}</td>
+    </tr>`).join("");
+}
 
-      ctx.clearRect(0, 0, W, H);
+// ── 캔버스 차트 ───────────────────────────────────────────────────
+function setupCanvas(canvas) {
+  const box = canvas.parentElement;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = box.clientWidth * dpr;
+  canvas.height = box.clientHeight * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  return { ctx, W: box.clientWidth, H: box.clientHeight };
+}
 
-      const pad = { top: 30, right: 20, bottom: 50, left: 60 };
-      const cw = W - pad.left - pad.right;
-      const ch = H - pad.top - pad.bottom;
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-      if (profile.length === 0) return;
+// 처리량 타임라인: 초 단위 토큰 수 area chart
+function drawTimeline(buckets) {
+  const { ctx, W, H } = setupCanvas($("timelineChart"));
+  ctx.clearRect(0, 0, W, H);
+  const pad = { top: 12, right: 8, bottom: 22, left: 46 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
 
-      const maxTotalTPS = Math.max(...profile.map(p => p.totalTPS)) * 1.15;
-      const maxAvgTPS = Math.max(...profile.map(p => p.avgTPS)) * 1.15;
+  const data = buckets.length > 1 ? buckets.slice(0, -1) : buckets; // 마지막 미완성 버킷 제외
+  const maxV = Math.max(10, ...data) * 1.1;
 
-      // Grid lines
-      ctx.strokeStyle = '#334155';
-      ctx.lineWidth = 0.5;
-      for (let i = 0; i <= 4; i++) {
-        const y = pad.top + (ch / 4) * i;
-        ctx.beginPath();
-        ctx.moveTo(pad.left, y);
-        ctx.lineTo(W - pad.right, y);
-        ctx.stroke();
+  // 그리드
+  ctx.strokeStyle = css("--line");
+  ctx.fillStyle = css("--text-faint");
+  ctx.font = "10px " + css("--mono");
+  ctx.textAlign = "right";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const y = pad.top + (ch / 3) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillText(Math.round(maxV * (1 - i / 3)), pad.left - 6, y + 3);
+  }
 
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = '11px sans-serif';
-        ctx.textAlign = 'right';
-        ctx.fillText(Math.round(maxTotalTPS * (1 - i / 4)), pad.left - 8, y + 4);
-      }
+  if (data.length === 0) {
+    ctx.textAlign = "center";
+    ctx.fillText("데이터 없음", W / 2, H / 2);
+    return;
+  }
 
-      const barW = Math.min(cw / (profile.length + 1), 60);
-      const gap = cw / (profile.length + 1);
+  const x = (i) => pad.left + (data.length === 1 ? cw / 2 : (cw * i) / (data.length - 1));
+  const y = (v) => pad.top + ch - (v / maxV) * ch;
 
-      // Bars (totalTPS)
-      profile.forEach((p, i) => {
-        const x = pad.left + gap * (i + 1) - barW / 2;
-        const barH = (p.totalTPS / maxTotalTPS) * ch;
-        const y = pad.top + ch - barH;
+  // area
+  const accent = css("--accent");
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(data[0]));
+  for (let i = 1; i < data.length; i++) ctx.lineTo(x(i), y(data[i]));
+  ctx.lineTo(x(data.length - 1), pad.top + ch);
+  ctx.lineTo(x(0), pad.top + ch);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(52, 211, 153, 0.12)";
+  ctx.fill();
 
-        const isOptimal = p.concurrent === optimal;
-        ctx.fillStyle = isOptimal ? '#22c55e' : '#3b82f6';
-        ctx.globalAlpha = 0.8;
-        ctx.fillRect(x, y, barW, barH);
-        ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.moveTo(x(0), y(data[0]));
+  for (let i = 1; i < data.length; i++) ctx.lineTo(x(i), y(data[i]));
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
 
-        // Value on top
-        ctx.fillStyle = '#e2e8f0';
-        ctx.font = '11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(p.totalTPS, x + barW / 2, y - 6);
+  // x 라벨 (초)
+  ctx.fillStyle = css("--text-faint");
+  ctx.textAlign = "center";
+  const step = Math.max(1, Math.ceil(data.length / 8));
+  for (let i = 0; i < data.length; i += step) {
+    ctx.fillText(i + "s", x(i), H - 6);
+  }
+}
 
-        // X label
-        ctx.fillStyle = isOptimal ? '#22c55e' : '#94a3b8';
-        ctx.font = isOptimal ? 'bold 12px sans-serif' : '11px sans-serif';
-        ctx.fillText(`n=${p.concurrent}`, x + barW / 2, H - pad.bottom + 20);
-      });
+// 동시성 프로파일: 처리량 막대 + decode 꺾은선
+function drawProfile(profile, optimal) {
+  const { ctx, W, H } = setupCanvas($("profileChart"));
+  ctx.clearRect(0, 0, W, H);
+  const pad = { top: 26, right: 52, bottom: 30, left: 52 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+  if (!profile.length) return;
 
-      // Line (avg TPS per request)
-      ctx.strokeStyle = '#f59e0b';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      profile.forEach((p, i) => {
-        const x = pad.left + gap * (i + 1);
-        const y = pad.top + ch - (p.avgTPS / maxAvgTPS) * ch;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.stroke();
+  const maxT = Math.max(...profile.map((p) => p.throughput)) * 1.15;
+  const maxD = Math.max(...profile.map((p) => p.avgDecodeTPS)) * 1.15;
+  const accent = css("--accent");
+  const warn = css("--warn");
 
-      // Legend
-      ctx.fillStyle = '#3b82f6';
-      ctx.fillRect(pad.left, 8, 12, 12);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.font = '12px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText('전체 TPS (총합)', pad.left + 16, 18);
+  ctx.strokeStyle = css("--line");
+  ctx.font = "10px " + css("--mono");
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 3; i++) {
+    const yy = pad.top + (ch / 3) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(W - pad.right, yy); ctx.stroke();
+    ctx.fillStyle = css("--text-faint");
+    ctx.textAlign = "right";
+    ctx.fillText(Math.round(maxT * (1 - i / 3)), pad.left - 6, yy + 3);
+    ctx.textAlign = "left";
+    ctx.fillText(fmtNum(maxD * (1 - i / 3)), W - pad.right + 6, yy + 3);
+  }
 
-      ctx.fillStyle = '#f59e0b';
-      ctx.fillRect(pad.left + 140, 8, 12, 12);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillText('평균 TPS (요청 개요)', pad.left + 156, 18);
+  const gap = cw / profile.length;
+  const barW = Math.min(gap * 0.55, 48);
+
+  profile.forEach((p, i) => {
+    const cx = pad.left + gap * (i + 0.5);
+    const bh = (p.throughput / maxT) * ch;
+    const isOpt = p.concurrency === optimal;
+    ctx.fillStyle = isOpt ? accent : "rgba(52, 211, 153, 0.35)";
+    ctx.fillRect(cx - barW / 2, pad.top + ch - bh, barW, bh);
+
+    ctx.fillStyle = css("--text-dim");
+    ctx.textAlign = "center";
+    ctx.fillText(Math.round(p.throughput), cx, pad.top + ch - bh - 5);
+
+    ctx.fillStyle = isOpt ? accent : css("--text-faint");
+    ctx.fillText(String(p.concurrency), cx, H - 8);
+  });
+
+  // decode 꺾은선 (오른쪽 축)
+  ctx.beginPath();
+  profile.forEach((p, i) => {
+    const cx = pad.left + gap * (i + 0.5);
+    const cy = pad.top + ch - (p.avgDecodeTPS / maxD) * ch;
+    i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
+  });
+  ctx.strokeStyle = warn;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  profile.forEach((p, i) => {
+    const cx = pad.left + gap * (i + 0.5);
+    const cy = pad.top + ch - (p.avgDecodeTPS / maxD) * ch;
+    ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = warn; ctx.fill();
+  });
+
+  // 범례
+  ctx.fillStyle = accent; ctx.fillRect(pad.left, 6, 10, 10);
+  ctx.fillStyle = css("--text-dim"); ctx.textAlign = "left";
+  ctx.fillText("시스템 처리량 tok/s", pad.left + 15, 14);
+  ctx.fillStyle = warn; ctx.fillRect(pad.left + 150, 10, 10, 2);
+  ctx.fillStyle = css("--text-dim");
+  ctx.fillText("요청당 decode tok/s", pad.left + 165, 14);
+}
+
+function fmtNum(v) {
+  return v >= 100 ? Math.round(v) : v.toFixed(1);
+}
+
+// ── 초기화 ────────────────────────────────────────────────────────
+window.addEventListener("resize", () => {
+  if (lastState) {
+    drawTimeline(lastState.buckets || []);
+    if (lastState.auto && lastState.auto.profile.length) {
+      const a = lastState.auto;
+      drawProfile(a.profile, a.optimal ? a.optimal.concurrency : (a.peak ? a.peak.concurrency : null));
     }
+  } else {
+    drawTimeline([]);
+  }
+});
 
-    // ── SSE Stream Viewer ─────────────────────────────────────
-
-    let eventSource = null;
-    const streamRequests = {}; // id -> {text, status, stats}
-
-    function connectSSE() {
-      if (eventSource) { eventSource.close(); }
-      eventSource = new EventSource('/api/stream');
-
-      eventSource.addEventListener('request-start', (e) => {
-        const data = JSON.parse(e.data);
-        streamRequests[data.id] = { text: '', status: 'running', stats: null };
-        updateStreamUI();
-        showStreamCard();
-      });
-
-      eventSource.addEventListener('token', (e) => {
-        const data = JSON.parse(e.data);
-        if (streamRequests[data.id]) {
-          streamRequests[data.id].text += data.text;
-          // Update the text without full re-render
-          const contentEl = document.querySelector(`.stream-content[data-id="${data.id}"]`);
-          if (contentEl) {
-            contentEl.textContent = streamRequests[data.id].text;
-          }
-        }
-      });
-
-      eventSource.addEventListener('request-end', (e) => {
-        const data = JSON.parse(e.data);
-        if (streamRequests[data.id]) {
-          streamRequests[data.id].status = 'done';
-          streamRequests[data.id].stats = data;
-        }
-        updateStreamUI();
-      });
-
-      eventSource.addEventListener('request-error', (e) => {
-        const data = JSON.parse(e.data);
-        if (streamRequests[data.id]) {
-          streamRequests[data.id].status = 'error';
-          streamRequests[data.id].text = '에러: ' + data.error;
-        }
-        updateStreamUI();
-      });
-
-      eventSource.addEventListener('bench-complete', () => {
-        // Keep the stream panel visible for review
-      });
-
-      eventSource.onerror = () => {
-        eventSource.close();
-        eventSource = null;
-      };
-    }
-
-    function disconnectSSE() {
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
-      }
-    }
-
-    function showStreamCard() {
-      document.getElementById('streamCard').classList.remove('hidden');
-    }
-
-    function hideStreamCard() {
-      document.getElementById('streamCard').classList.add('hidden');
-      document.getElementById('streamPanel').innerHTML = '';
-      Object.keys(streamRequests).forEach(k => delete streamRequests[k]);
-    }
-
-    function updateStreamUI() {
-      const panel = document.getElementById('streamPanel');
-      const ids = Object.keys(streamRequests).map(Number);
-      // Remove cards that are no longer needed
-      panel.querySelectorAll('.stream-card').forEach(el => {
-        const id = parseInt(el.dataset.id);
-        if (!streamRequests[id]) el.remove();
-      });
-
-      for (const id of ids) {
-        let card = panel.querySelector(`.stream-card[data-id="${id}"]`);
-        if (!card) {
-          card = document.createElement('div');
-          card.className = 'stream-card';
-          card.dataset.id = id;
-          const hdr = document.createElement('div');
-          hdr.className = 'stream-header';
-          hdr.innerHTML = `<span class="stream-toggle">▶</span><span class="stream-id">Req ${id + 1}</span><span class="stream-status running">진행 중</span><span class="stream-stats"></span>`;
-          hdr.onclick = () => card.classList.toggle('expanded');
-          const body = document.createElement('div');
-          body.className = 'stream-body';
-          const content = document.createElement('span');
-          content.className = 'stream-content';
-          content.dataset.id = id;
-          body.appendChild(content);
-          card.appendChild(hdr);
-          card.appendChild(body);
-          card.classList.add('expanded');
-          panel.prepend(card);
-        }
-      }
-
-      // Update existing cards
-      for (const id of ids) {
-        const req = streamRequests[id];
-        const card = panel.querySelector(`.stream-card[data-id="${id}"]`);
-        if (!card) continue;
-        const statusEl = card.querySelector('.stream-status');
-        const statsEl = card.querySelector('.stream-stats');
-        if (req.status === 'running') {
-          statusEl.className = 'stream-status running';
-          statusEl.textContent = '진행 중';
-          statsEl.textContent = '';
-          card.className = 'stream-card expanded';
-        } else if (req.status === 'done') {
-          statusEl.className = 'stream-status done';
-          statusEl.textContent = '완료';
-          statsEl.textContent = `${req.stats.outputTokens} tokens | ${req.stats.latency}s | TPS ${req.stats.tps}`;
-          card.className = 'stream-card done';
-        } else if (req.status === 'error') {
-          statusEl.className = 'stream-status error';
-          statusEl.textContent = '실패';
-          statsEl.textContent = '';
-          card.className = 'stream-card error';
-        }
-      }
-    }
-
-    // Override startBenchmark to connect SSE
-    const _origStart = window.startBenchmark;
-    window.startBenchmark = async function() {
-      hideStreamCard();
-      connectSSE();
-      await _origStart();
-    };
-
-    // Override stopBenchmark to disconnect SSE
-    const _origStop = window.stopBenchmark;
-    window.stopBenchmark = async function() {
-      wasMeasuring = false;
-      await _origStop();
-      disconnectSSE();
-    };
-
-    // Override resetBenchmark to clean up SSE
-    const _origReset = window.resetBenchmark;
-    window.resetBenchmark = async function() {
-      wasMeasuring = false;
-      await _origReset();
-      disconnectSSE();
-      hideStreamCard();
-    }
-  </script>
+connectSSE();
+drawTimeline([]);
+</script>
 </body>
-
 </html>
