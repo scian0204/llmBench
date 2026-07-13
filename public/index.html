@@ -152,6 +152,33 @@
   .btn-reset { background: transparent; color: var(--text-dim); border: 1px solid var(--line-strong); flex: 0 0 auto; padding: 0.6rem 0.9rem; }
   .form-error { color: var(--danger); font-size: 12.5px; min-height: 1.1em; }
 
+  .ghost-btn {
+    align-self: flex-start;
+    background: transparent;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-family: inherit;
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+  }
+  .ghost-btn:hover { color: var(--text); border-color: var(--accent); }
+  .preview-pane {
+    max-height: 220px;
+    overflow-y: auto;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.6rem;
+    font-family: var(--mono);
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-dim);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
   /* ── 메인 ── */
   main { padding: 1.25rem 1.5rem 3rem; min-width: 0; }
   section + section { margin-top: 2rem; }
@@ -311,6 +338,8 @@
       <div class="field">
         <label>프롬프트</label>
         <textarea id="prompt">인공지능의 미래에 대해 자유롭게 서술해주세요.</textarea>
+        <button type="button" class="ghost-btn" onclick="previewPrompt()">전송 프롬프트 미리보기</button>
+        <pre id="promptPreview" class="preview-pane hidden"></pre>
       </div>
 
       <div id="manualFields">
@@ -531,6 +560,37 @@ async function startBench() {
 
 async function stopBench() {
   await fetch("/api/bench/stop", { method: "POST" }).catch(() => {});
+}
+
+async function previewPrompt() {
+  const pane = $("promptPreview");
+  if (!pane.classList.contains("hidden")) { // 토글
+    pane.classList.add("hidden");
+    return;
+  }
+  const prompt = $("prompt").value.trim();
+  if (!prompt) {
+    $("formError").textContent = "프롬프트를 입력하세요.";
+    return;
+  }
+  try {
+    const res = await fetch("/api/bench/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        varyPrompt: $("varyPrompt").checked,
+        includeCodebase: $("includeCodebase").checked,
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || "실패");
+    pane.textContent = `표본 1개 (${d.chars.toLocaleString()}자, 변주 켜면 요청마다 달라짐)\n\n${d.preview}`;
+    pane.classList.remove("hidden");
+    $("formError").textContent = "";
+  } catch (err) {
+    $("formError").textContent = "미리보기 실패: " + err.message;
+  }
 }
 
 async function resetBench() {

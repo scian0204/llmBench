@@ -196,15 +196,19 @@ function newRun(config) {
   };
 }
 
-function buildPrompt(r) {
-  const c = r.config;
-  let p = c.varyPrompt ? varyPrompt(c.prompt) : c.prompt;
-  if (r.codebasePool) {
+function composePrompt(basePrompt, vary, codebaseText) {
+  let p = vary ? varyPrompt(basePrompt) : basePrompt;
+  if (codebaseText) {
     // nonce가 코드베이스 앞에 와야 vLLM prefix 캐시가 20k 토큰 prefill을 스킵하지 못함
-    const nonce = c.varyPrompt ? `요청 식별자: ${Math.random().toString(36).slice(2)}\n` : "";
-    p = `${nonce}<참조 코드베이스>\n${pickRandom(r.codebasePool)}\n</참조 코드베이스>\n\n${p}`;
+    const nonce = vary ? `요청 식별자: ${Math.random().toString(36).slice(2)}\n` : "";
+    p = `${nonce}<참조 코드베이스>\n${codebaseText}\n</참조 코드베이스>\n\n${p}`;
   }
   return p;
+}
+
+function buildPrompt(r) {
+  const c = r.config;
+  return composePrompt(c.prompt, c.varyPrompt, r.codebasePool ? pickRandom(r.codebasePool) : null);
 }
 
 function bucketTokens(r, atMs, n) {
@@ -696,6 +700,17 @@ app.post("/api/bench/reset", (_req, res) => {
 
 app.get("/api/bench/state", (_req, res) => {
   res.json(snapshot());
+});
+
+// 실제 전송될 프롬프트 표본 1개 생성 (변주는 요청마다 달라짐)
+app.post("/api/bench/preview", (req, res) => {
+  const { prompt, varyPrompt: vary, includeCodebase } = req.body || {};
+  if (!prompt) {
+    return res.status(400).json({ error: "prompt가 필요합니다" });
+  }
+  const codebase = includeCodebase === true ? generateCodebase(Math.floor(Math.random() * 1_000_000)) : null;
+  const preview = composePrompt(String(prompt), vary !== false, codebase);
+  res.json({ preview, chars: preview.length });
 });
 
 app.get("/api/bench/stream", (req, res) => {
