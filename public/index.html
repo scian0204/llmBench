@@ -275,7 +275,7 @@
   /* 차트 */
   .chart-box { position: relative; height: 180px; }
   .chart-box.tall { height: 240px; }
-  canvas { width: 100%; height: 100%; display: block; }
+  canvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
 
   /* 테이블 */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -964,6 +964,30 @@ function setupCanvas(canvas) {
 
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
+// ── hover 툴팁 ────────────────────────────────────────────────────
+let tlHover = -1, pfHover = -1;   // 각 차트의 hover 데이터 인덱스
+let tlGeom = null, pfGeom = null; // 마지막 draw의 데이터/좌표 (hit-test용)
+
+function drawTooltip(ctx, W, x, y, lines) {
+  ctx.font = "11px " + css("--mono");
+  const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16;
+  const h = lines.length * 15 + 10;
+  let tx = x + 10;
+  let ty = y - h - 6;
+  if (tx + w > W - 4) tx = x - w - 10;
+  if (ty < 4) ty = y + 10;
+  ctx.beginPath();
+  ctx.roundRect(tx, ty, w, h, 6);
+  ctx.fillStyle = "rgba(16, 16, 20, 0.95)";
+  ctx.fill();
+  ctx.strokeStyle = css("--line-strong");
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.fillStyle = css("--text");
+  ctx.textAlign = "left";
+  lines.forEach((l, i) => ctx.fillText(l, tx + 8, ty + 16 + i * 15));
+}
+
 // 처리량 타임라인: 초 단위 토큰 수 area chart
 function drawTimeline(buckets) {
   const { ctx, W, H } = setupCanvas($("timelineChart"));
@@ -988,6 +1012,7 @@ function drawTimeline(buckets) {
   }
 
   if (data.length === 0) {
+    tlGeom = null;
     ctx.textAlign = "center";
     ctx.fillText("데이터 없음", W / 2, H / 2);
     return;
@@ -1021,6 +1046,19 @@ function drawTimeline(buckets) {
   for (let i = 0; i < data.length; i += step) {
     ctx.fillText(i + "s", x(i), H - 6);
   }
+
+  tlGeom = { n: data.length, pad, cw };
+  if (tlHover >= 0 && tlHover < data.length) {
+    const hx = x(tlHover);
+    const hy = y(data[tlHover]);
+    ctx.strokeStyle = css("--line-strong");
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(hx, pad.top); ctx.lineTo(hx, pad.top + ch); ctx.stroke();
+    ctx.beginPath(); ctx.arc(hx, hy, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = accent;
+    ctx.fill();
+    drawTooltip(ctx, W, hx, hy, [`${tlHover}s 구간`, `${data[tlHover]} tok/s`]);
+  }
 }
 
 // 동시성 프로파일: 처리량 막대 + decode 꺾은선
@@ -1030,7 +1068,7 @@ function drawProfile(profile, optimal) {
   const pad = { top: 26, right: 52, bottom: 30, left: 52 };
   const cw = W - pad.left - pad.right;
   const ch = H - pad.top - pad.bottom;
-  if (!profile.length) return;
+  if (!profile.length) { pfGeom = null; return; }
 
   const maxT = Math.max(...profile.map((p) => p.throughput)) * 1.15;
   const maxD = Math.max(...profile.map((p) => p.avgDecodeTPS)) * 1.15;
@@ -1092,11 +1130,61 @@ function drawProfile(profile, optimal) {
   ctx.fillStyle = warn; ctx.fillRect(pad.left + 150, 10, 10, 2);
   ctx.fillStyle = css("--text-dim");
   ctx.fillText("요청당 decode tok/s", pad.left + 165, 14);
+
+  pfGeom = { n: profile.length, pad, cw };
+  if (pfHover >= 0 && pfHover < profile.length) {
+    const p = profile[pfHover];
+    const hx = pad.left + gap * (pfHover + 0.5);
+    ctx.strokeStyle = css("--line-strong");
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(hx, pad.top); ctx.lineTo(hx, pad.top + ch); ctx.stroke();
+    drawTooltip(ctx, W, hx, pad.top + ch * 0.35, [
+      `동시성 ${p.concurrency}`,
+      `처리량 ${p.throughput} tok/s`,
+      `decode ${p.avgDecodeTPS} tok/s`,
+      `latency p50 ${p.p50Latency}s / p95 ${p.p95Latency}s`,
+      `TTFT p50 ${p.p50TTFT}s`,
+      `성공 ${p.success} / 실패 ${p.failed}`,
+    ]);
+  }
 }
 
 function fmtNum(v) {
   return v >= 100 ? Math.round(v) : v.toFixed(1);
 }
+
+// ── 차트 hover 리스너 ────────────────────────────────────────────
+function redrawTimeline() {
+  drawTimeline(lastState && lastState.buckets ? lastState.buckets : []);
+}
+function redrawProfile() {
+  const a = lastState && lastState.auto;
+  if (a && a.profile.length) {
+    drawProfile(a.profile, a.optimal ? a.optimal.concurrency : (a.peak ? a.peak.concurrency : null));
+  }
+}
+
+$("timelineChart").addEventListener("mousemove", (e) => {
+  if (!tlGeom || tlGeom.n === 0) return;
+  const { n, pad, cw } = tlGeom;
+  let i = n === 1 ? 0 : Math.round(((e.offsetX - pad.left) / cw) * (n - 1));
+  if (e.offsetX < pad.left - 8 || e.offsetX > pad.left + cw + 8 || i < 0 || i >= n) i = -1;
+  if (i !== tlHover) { tlHover = i; redrawTimeline(); }
+});
+$("timelineChart").addEventListener("mouseleave", () => {
+  if (tlHover !== -1) { tlHover = -1; redrawTimeline(); }
+});
+
+$("profileChart").addEventListener("mousemove", (e) => {
+  if (!pfGeom || pfGeom.n === 0) return;
+  const { n, pad, cw } = pfGeom;
+  let i = Math.floor((e.offsetX - pad.left) / (cw / n));
+  if (e.offsetX < pad.left || i < 0 || i >= n) i = -1;
+  if (i !== pfHover) { pfHover = i; redrawProfile(); }
+});
+$("profileChart").addEventListener("mouseleave", () => {
+  if (pfHover !== -1) { pfHover = -1; redrawProfile(); }
+});
 
 // ── 초기화 ────────────────────────────────────────────────────────
 window.addEventListener("resize", () => {
