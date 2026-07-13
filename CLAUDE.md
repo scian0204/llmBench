@@ -36,11 +36,13 @@ Three files: `server.js` (engine + API), `public/index.html` (frontend, single f
 
 ### API
 
-- `POST /api/bench/start` — body: `baseUrl, model, prompt, mode(manual|auto), apiKey?, maxTokens, temperature, varyPrompt, includeCodebase, warmupRequests` + manual: `concurrency, totalRequests` / auto: `maxConcurrency, requestsPerLevel`. 409 if running.
+- `POST /api/bench/start` — body: `baseUrl, model, prompt, mode(manual|auto), apiKey?, maxTokens?, temperature?, varyPrompt, includeCodebase, warmupRequests` + manual: `concurrency, totalRequests` / auto: `maxConcurrency, requestsPerLevel`. 409 if running. `maxTokens`/`temperature` omitted or empty = field left out of the target payload so the vLLM server default applies.
 - `POST /api/bench/stop` — abort immediately
 - `POST /api/bench/reset` — clear state
 - `GET /api/bench/state` — full snapshot (same shape as SSE `state` event)
 - `GET /api/bench/stream` — SSE: `state` (every 500ms), `request-start`, `tokens` (batched every 100ms per request), `request-end`, `request-error`, `done`
+- `POST /api/bench/preview` — body: `prompt, varyPrompt, includeCodebase`; returns one sample of the composed prompt (`{preview, chars}`)
+- `POST /api/models` — body: `baseUrl, apiKey?`; proxies `GET {baseUrl}/models` (browser would be CORS-blocked), returns `{models: [id...]}`
 
 The frontend is SSE-driven only; there is no polling loop. `state` snapshot includes `buckets` (per-second output token counts) for the live throughput timeline.
 
